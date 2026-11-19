@@ -1,0 +1,69 @@
+import { notFound } from "next/navigation";
+import { site } from "@/lib/site";
+
+/**
+ * Черновики информационных страниц. Тексты оферты и правил возврата заменить на утвержденные
+ * до подачи заявки провайдеру; все [__] заполнить (ТЗ, раздел 6).
+ */
+const pages: Record<string, { title: string; body: React.ReactNode }> = {
+  payment: {
+    title: "Оплата и выдача",
+    body: (
+      <>
+        <p>Оплата только по QR-коду ELQR из приложения любого банка Кыргызстана. Банковские карты на сайте не принимаются. Цены и оплата — в сомах (KGS).</p>
+        <p>После оформления заказа вы увидите QR-код на точную сумму. Код действует 15 минут; если оплата не поступила, заказ отменяется.</p>
+        <h2>Когда выдается товар</h2>
+        <ul>
+          <li>Ключи игр и CS2 Prime — сразу после подтверждения оплаты банком: ключ на странице заказа и в письме.</li>
+          <li>Dota Plus — в течение [__] часов, статус виден на странице заказа.</li>
+          <li>Скины — трейд-оффером Steam на вашу trade-ссылку в течение [__] минут.</li>
+        </ul>
+        <h2>Что такое trade hold</h2>
+        <p>Steam может задержать обмен или откатить его в течение срока защиты сделки. Это правило Steam, магазин на него не влияет.</p>
+      </>
+    ),
+  },
+  refund: {
+    title: "Возврат",
+    body: (
+      <>
+        <p>Деньги возвращаются полностью, если товар не был выдан, ключ не активируется или скин не соответствует карточке.</p>
+        <p>Если оплата пришла после отмены заказа, деньги возвращаются автоматически.</p>
+        <p>Срок рассмотрения обращения — [__] рабочих дней, срок возврата денег — [__] рабочих дней на счет, с которого была оплата.</p>
+        <p>Обращения: {site.email}, Telegram {site.telegram}.</p>
+      </>
+    ),
+  },
+  offer: {
+    title: "Публичная оферта",
+    body: <p>Текст оферты: [__]. Будет подготовлен и согласован до подключения приема платежей.</p>,
+  },
+  contacts: {
+    title: "Контакты и реквизиты",
+    body: (
+      <ul>
+        <li>{site.legalName}</li>
+        <li>ИНН: {site.inn}</li>
+        <li>Юридический адрес: {site.address}</li>
+        <li>Телефон: {site.phone}</li>
+        <li>Email: {site.email}</li>
+        <li>Telegram: {site.telegram}</li>
+      </ul>
+    ),
+  },
+};
+
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  return { title: pages[(await params).slug]?.title ?? "Информация" };
+}
+
+export default async function InfoPage({ params }: { params: Promise<{ slug: string }> }) {
+  const page = pages[(await params).slug];
+  if (!page) notFound();
+  return (
+    <article className="mx-auto max-w-2xl space-y-4 text-sm leading-relaxed text-muted [&_h2]:pt-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-text [&_li]:ml-5 [&_li]:list-disc">
+      <h1 className="text-2xl font-bold text-text">{page.title}</h1>
+      {page.body}
+    </article>
+  );
+}

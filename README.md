@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PlayGround — магазин ключей, Prime, Dota Plus и скинов CS2 / Dota 2
 
-## Getting Started
+Next.js 15 (App Router) + TypeScript + Tailwind 4 + PostgreSQL + Drizzle ORM.
+Оплата только ELQR в сомах, товар выдается только по webhook провайдера с проверенной подписью.
 
-First, run the development server:
+## Запуск локально
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env              # заполнить DATA_ENCRYPTION_KEY, MOCK_ELQR_WEBHOOK_SECRET, CRON_SECRET
+docker compose up -d              # PostgreSQL 16
+npm install
+npm run db:migrate
+npm run db:seed                   # тестовые товары и ключи (только для разработки!)
+npm run dev                       # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Секреты: `openssl rand -base64 32` для DATA_ENCRYPTION_KEY, `openssl rand -hex 24` для остальных.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Тесты (нужна база `shop_test`, `createdb -O shop shop_test` и `DATABASE_URL=...shop_test npm run db:migrate`):
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test
+```
 
-## Learn More
+## Как проверить покупку
 
-To learn more about Next.js, take a look at the following resources:
+1. Главная → CS2 Prime Status → «Купить» → email + 18+ + оферта.
+2. На странице заказа QR и таймер 15 минут. В режиме `PAYMENT_PROVIDER=mock` есть ссылка «страница тестового банка».
+3. «Оплатить» в тестовом банке → банк шлет подписанный webhook → страница заказа сама показывает ключ.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Структура
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Путь | Что там |
+|---|---|
+| `src/db/schema.ts` | Модель данных под все ТЗ, включая P2P (продавцы, лоты, сделки, выплаты) |
+| `src/lib/orders/service.ts` | Заказ, резерв, отмена через 15 мин, обработка webhook, выдача, возвраты |
+| `src/lib/payments/` | Контракт провайдера ELQR и mock-провайдер |
+| `src/lib/crypto.ts` | AES-256-GCM для ключей активации и паспортных данных |
+| `src/app/api/payments/webhook/[provider]` | Callback провайдера |
+| `src/app/api/cron/expire-orders` | Крон раз в минуту: `POST` с `Authorization: Bearer $CRON_SECRET` |
+| `src/app/dev/mock-bank/[id]` | Тестовый банк (только при mock) |
+| `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки |
 
-## Deploy on Vercel
+## Правила, которые нельзя ломать
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Нет кейсов, рулеток, случайных выдач, внутреннего баланса, пополнения и вывода. Кейсы и капсулы фильтруются при синхронизации инвентаря и выставлении лотов.
+- Выдача только в `handlePaymentWebhook` после проверки подписи. Опрос статуса через API провайдера товар не выдает, а только ставит заказ на проверку.
+- Один заказ = один платеж; повтор webhook ничего не выдает второй раз.
+- Оплата по просроченному заказу уходит на автоматический возврат.
+- Деньги в тыйынах (integer), валюта только KGS.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Подключение реального провайдера
+
+Создать `src/lib/payments/<provider>.ts`, реализующий `PaymentProvider` (createQr, getStatus, verifyWebhook, refund), добавить в `getPaymentProvider` и в enum `PAYMENT_PROVIDER` в `src/lib/env.ts`. Логику заказов менять не нужно.
+
+## Дальше по этапам
+
+- [ ] Вход через Steam (OpenID) и по email, покупка скинов с trade-ссылкой
+- [ ] Админка: товары, загрузка ключей из CSV, заказы, ручная выдача Dota Plus, возвраты, роли
+- [ ] Воркер Steam-ботов: синхронизация инвентаря, очередь `trade_offers`
+- [ ] Отправка писем из `email_outbox` (SMTP)
+- [ ] P2P-маркет: верификация, лоты, сделки, выплаты (после согласования схемы с провайдером)
+- [ ] Финальные тексты оферты, правил возврата, политики конфиденциальности; реквизиты вместо [__]
