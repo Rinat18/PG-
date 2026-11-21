@@ -11,6 +11,11 @@ const schema = z.object({
   MAX_ORDERS_PER_EMAIL_PER_HOUR: z.coerce.number().int().positive().default(3),
   REVIEW_THRESHOLD_MINOR: z.coerce.number().int().positive().optional(), // порог ручной проверки [__] сом
   CRON_SECRET: z.string().min(16).optional(),
+  // Подпись cookie сессии: openssl rand -hex 32
+  SESSION_SECRET: z.string().min(32),
+  SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30), // срок жизни сессии [__] дней
+  // Ключ Steam Web API (имя и аватар, в этапе 2 — проверки инвентаря): https://steamcommunity.com/dev/apikey
+  STEAM_API_KEY: z.string().optional().transform((v) => v || undefined),
 });
 
 export const env = schema.parse(process.env);

@@ -2,13 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { navGames, site } from "@/lib/site";
+import { getCurrentUser } from "@/lib/auth/current";
 
 export const metadata: Metadata = {
   title: { default: `${site.name} — ключи, Prime, Dota Plus и скины`, template: `%s · ${site.name}` },
   description: "Ключи игр, CS2 Prime, Dota Plus и скины CS2 и Dota 2 с оплатой по QR ELQR в сомах.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const user = await getCurrentUser();
   return (
     <html lang="ru">
       <body className="min-h-screen flex flex-col antialiased">
@@ -27,6 +29,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <form action="/search" className="ml-auto hidden sm:block">
               <input name="q" placeholder="Поиск товара" className="input w-56 py-1.5" />
             </form>
+            <Link href={user ? "/account" : "/login"} className="ml-auto text-sm font-semibold hover:text-accent sm:ml-0">
+              {user ? (user.displayName ?? "Кабинет") : "Войти"}
+            </Link>
           </div>
         </header>
 

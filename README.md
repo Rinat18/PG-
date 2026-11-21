@@ -6,7 +6,7 @@ Next.js 15 (App Router) + TypeScript + Tailwind 4 + PostgreSQL + Drizzle ORM.
 ## Запуск локально
 
 ```bash
-cp .env.example .env              # заполнить DATA_ENCRYPTION_KEY, MOCK_ELQR_WEBHOOK_SECRET, CRON_SECRET
+cp .env.example .env              # заполнить DATA_ENCRYPTION_KEY, MOCK_ELQR_WEBHOOK_SECRET, CRON_SECRET, SESSION_SECRET (+ STEAM_API_KEY)
 docker compose up -d              # PostgreSQL 16
 npm install
 npm run db:migrate
@@ -39,7 +39,11 @@ npm test
 | `src/app/api/payments/webhook/[provider]` | Callback провайдера |
 | `src/app/api/cron/expire-orders` | Крон раз в минуту: `POST` с `Authorization: Bearer $CRON_SECRET` |
 | `src/app/dev/mock-bank/[id]` | Тестовый банк (только при mock) |
-| `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки |
+| `src/lib/auth/` | Сессии (подписанная httpOnly-cookie), Steam OpenID 2.0, вход по одноразовой ссылке |
+| `src/lib/account.ts` | Кабинет: заказы и ключи только владельца, trade-ссылка только своего Steam |
+| `src/lib/security/` | Ограничение частоты по IP (в PostgreSQL) и honeypot |
+| `src/middleware.ts` | Редирект `/account/*` на `/login` без cookie сессии |
+| `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки; сессии, OpenID, вход по email, доступ к чужим заказам |
 
 ## Правила, которые нельзя ломать
 
@@ -55,7 +59,8 @@ npm test
 
 ## Дальше по этапам
 
-- [ ] Вход через Steam (OpenID) и по email, покупка скинов с trade-ссылкой
+- [x] Вход через Steam (OpenID) и по email, личный кабинет, привязка гостевых заказов
+- [ ] Покупка скинов с trade-ссылкой и проверками Steam API
 - [ ] Админка: товары, загрузка ключей из CSV, заказы, ручная выдача Dota Plus, возвраты, роли
 - [ ] Воркер Steam-ботов: синхронизация инвентаря, очередь `trade_offers`
 - [ ] Отправка писем из `email_outbox` (SMTP)

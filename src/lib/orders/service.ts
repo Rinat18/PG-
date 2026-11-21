@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import {
@@ -79,12 +79,17 @@ export async function createOrder(input: CheckoutInput, ctx: { ip?: string; user
     throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
   }
 
-  // Антифрод: не более N заказов с одного email в час (ТЗ, раздел 7)
+  // Антифрод: не более N заказов с одного email или аккаунта в час (ТЗ, раздел 7)
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(orders)
-    .where(and(eq(orders.email, data.email), gte(orders.createdAt, hourAgo)));
+    .where(
+      and(
+        ctx.userId ? or(eq(orders.email, data.email), eq(orders.userId, ctx.userId)) : eq(orders.email, data.email),
+        gte(orders.createdAt, hourAgo),
+      ),
+    );
   if (count >= env.MAX_ORDERS_PER_EMAIL_PER_HOUR) {
     throw new OrderError("RATE_LIMIT", "Слишком много заказов за час. Попробуйте позже или напишите в поддержку");
   }

@@ -99,12 +99,57 @@ export const users = pgTable(
     displayName: text("display_name"),
     avatarUrl: text("avatar_url"),
     role: userRoleEnum("role").notNull().default("BUYER"),
+    emailVerifiedAt: ts("email_verified_at"), // email подтвержден одноразовой ссылкой
     tradeUrl: text("trade_url"),
     isBlocked: boolean("is_blocked").notNull().default(false),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("users_steam_id_uq").on(t.steamId), index("users_email_idx").on(t.email)],
+  // email храним в нижнем регистре; один email — один аккаунт
+  (t) => [uniqueIndex("users_steam_id_uq").on(t.steamId), uniqueIndex("users_email_uq").on(t.email)],
 );
+
+/**
+ * Сессии. В cookie лежит `<token>.<hmac>`, в базе — sha256(token):
+ * утечка таблицы не дает войти, подделка cookie отсекается подписью.
+ */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(), // sha256(token)
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: ts("expires_at").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+/** Одноразовые ссылки входа по email (15 минут). userId задан, если вошедший пользователь привязывает email. */
+export const loginTokens = pgTable(
+  "login_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenHash: text("token_hash").notNull(),
+    email: text("email").notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    nextPath: text("next_path"),
+    expiresAt: ts("expires_at").notNull(),
+    usedAt: ts("used_at"),
+    ip: text("ip"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("login_tokens_hash_uq").on(t.tokenHash), index("login_tokens_email_idx").on(t.email, t.createdAt)],
+);
+
+/** Счетчики ограничения частоты (по IP, email и т. п.) с фиксированным окном. */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  windowEndsAt: ts("window_ends_at").notNull(),
+});
 
 export const botAccounts = pgTable("bot_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),

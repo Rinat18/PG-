@@ -2,16 +2,18 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
+import { Honeypot } from "@/components/Honeypot";
 import { checkoutAction, type CheckoutState } from "./actions";
 
-export function CheckoutForm({ slug, needsTradeUrl }: { slug: string; needsTradeUrl: boolean }) {
+export function CheckoutForm({ slug, needsTradeUrl, defaultEmail }: { slug: string; needsTradeUrl: boolean; defaultEmail?: string }) {
   const [state, action, pending] = useActionState<CheckoutState, FormData>(checkoutAction, {});
   return (
-    <form action={action} className="space-y-4">
+    <form action={action} className="relative space-y-4">
       <input type="hidden" name="slug" value={slug} />
+      <Honeypot />
       <label className="block space-y-1.5">
         <span className="text-sm">Email для чека{needsTradeUrl ? "" : " и ключа"}</span>
-        <input name="email" type="email" required defaultValue={state.values?.email} className="input" placeholder="you@example.com" />
+        <input name="email" type="email" required defaultValue={state.values?.email ?? defaultEmail} className="input" placeholder="you@example.com" />
       </label>
       {needsTradeUrl && (
         <label className="block space-y-1.5">

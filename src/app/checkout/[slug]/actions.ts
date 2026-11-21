@@ -1,15 +1,20 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createOrder, OrderError } from "@/lib/orders/service";
+import { getClientIp, getCurrentUser } from "@/lib/auth/current";
+import { allowFormByIp, isHoneypotTripped } from "@/lib/security/rate-limit";
 
 export type CheckoutState = { error?: string; values?: { email: string } };
 
 export async function checkoutAction(_prev: CheckoutState, form: FormData): Promise<CheckoutState> {
   const email = String(form.get("email") ?? "");
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip") ?? undefined;
+  if (isHoneypotTripped(form)) return { error: "Не получилось создать заказ. Попробуйте еще раз", values: { email } };
+  const ip = await getClientIp();
+  if (!(await allowFormByIp("checkout", ip))) {
+    return { error: "Слишком много попыток. Подождите несколько минут", values: { email } };
+  }
+  const user = await getCurrentUser();
 
   let token: string;
   try {
@@ -21,7 +26,7 @@ export async function checkoutAction(_prev: CheckoutState, form: FormData): Prom
         adultConfirmed: form.get("adult") === "on",
         offerAccepted: form.get("offer") === "on",
       },
-      { ip },
+      { ip, userId: user?.id },
     );
     token = order.accessToken;
   } catch (e) {
