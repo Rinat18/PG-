@@ -3,7 +3,6 @@ import { z } from "zod";
 import { db, type Tx } from "@/db";
 import {
   auditLog,
-  emailOutbox,
   orderItems,
   users,
   orders,
@@ -14,12 +13,12 @@ import {
   tradeOffers,
   webhookEvents,
 } from "@/db/schema";
-import { decrypt, encrypt, randomToken } from "@/lib/crypto";
+import { decrypt, randomToken } from "@/lib/crypto";
 import { env } from "@/lib/env";
-import { formatKgs } from "@/lib/format";
 import { getPaymentProvider } from "@/lib/payments";
 import type { PaymentWebhookEvent } from "@/lib/payments/types";
 import { getSettings } from "@/lib/settings";
+import { queueEmail } from "@/lib/email/outbox";
 import { checkSkinBuyer, getSteamApi, SkinBuyerError, type SteamApi } from "@/lib/steam/buyer-checks";
 
 /** Оплата, пришедшая чуть позже таймера (задержка банка), еще принимается. */
@@ -334,10 +333,11 @@ export async function handlePaymentWebhook(providerName: string, rawBody: string
 
   if (outcome.refundId) await processRefund(outcome.refundId);
   if (outcome.deliveredOrderId) await queueReceiptEmail(outcome.deliveredOrderId);
+  if (outcome.problemOrderId) await notifyDeliveryProblem(outcome.problemOrderId);
   return { httpStatus: 200, result: outcome.result };
 }
 
-type ApplyOutcome = { result: string; refundId?: string; deliveredOrderId?: string };
+type ApplyOutcome = { result: string; refundId?: string; deliveredOrderId?: string; problemOrderId?: string };
 
 async function applyPaymentEvent(providerName: string, event: PaymentWebhookEvent): Promise<ApplyOutcome> {
   return db.transaction(async (tx) => {
@@ -360,7 +360,7 @@ async function applyPaymentEvent(providerName: string, event: PaymentWebhookEven
         .set({ status: "PROBLEM", needsReview: true, problemReason: `amount_mismatch: got ${event.amountMinor}` })
         .where(eq(orders.id, order.id));
       await auditTx(tx, "system", "payment.amount_mismatch", "order", order.id, { expected: payment.amountMinor, got: event.amountMinor });
-      return { result: "amount_mismatch" };
+      return { result: "amount_mismatch", problemOrderId: order.id };
     }
 
     const lateByClock = event.occurredAt.getTime() > order.expiresAt.getTime() + LATE_PAYMENT_GRACE_MS;
@@ -391,7 +391,12 @@ async function applyPaymentEvent(providerName: string, event: PaymentWebhookEven
     await tx.update(orders).set({ status: "PAID", paidAt: event.occurredAt }).where(eq(orders.id, order.id));
     const delivered = await fulfillOrder(tx, order.id);
     await auditTx(tx, "system", "order.paid", "order", order.id, { delivered });
-    return { result: delivered ? "paid_delivered" : "paid_awaiting_delivery", deliveredOrderId: order.id };
+    const [after] = await tx.select({ status: orders.status }).from(orders).where(eq(orders.id, order.id));
+    return {
+      result: delivered ? "paid_delivered" : "paid_awaiting_delivery",
+      deliveredOrderId: order.id,
+      problemOrderId: after.status === "PROBLEM" ? order.id : undefined,
+    };
   });
 }
 
@@ -462,14 +467,8 @@ export async function processRefund(refundId: string) {
       await tx.update(orders).set({ status: "REFUNDED" }).where(eq(orders.id, payment.orderId));
     });
     const [order] = await db.select().from(orders).where(eq(orders.id, payment.orderId));
-    await db.insert(emailOutbox).values({
-      to: order.email,
-      subject: `Возврат по заказу ${order.number}`,
-      encryptedBody: encrypt(
-        `Мы вернули ${formatKgs(refund.amountMinor)} по заказу ${order.number}. ` +
-          `Деньги поступят на счет, с которого была оплата, в срок [__] рабочих дней.`,
-      ),
-    });
+    const cfg = await getSettings();
+    await queueEmail(order.email, "refund", { number: order.number, amountMinor: refund.amountMinor, refundDays: cfg.refundReviewDays });
   } catch (e) {
     // остается в очереди возвратов админки
     await db.update(refunds).set({ status: "FAILED", error: (e as Error).message }).where(eq(refunds.id, refund.id));
@@ -537,22 +536,48 @@ function shouldCheckProvider(p: typeof payments.$inferSelect) {
 // ---------- Письма и аудит ----------
 
 async function queueReceiptEmail(orderId: string) {
-  const data = await db.select().from(orders).where(eq(orders.id, orderId));
-  const order = data[0];
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   if (!order) return;
   const view = await getOrderForBuyer(order.accessToken);
   if (!view) return;
-  const lines = [
-    `Заказ ${order.number} оплачен: ${formatKgs(order.totalMinor)}.`,
-    ...view.items.map((i) => `• ${i.titleSnapshot} — ${formatKgs(i.priceMinor)}`),
-    ...(view.keys.length ? ["", "Ваши ключи:", ...view.keys.map((k) => `${k.title}: ${k.code}`)] : []),
-    "",
-    `Заказ: ${env.APP_URL}/order/${order.accessToken}`,
-  ];
-  await db.insert(emailOutbox).values({
-    to: order.email,
-    subject: `Заказ ${order.number}: оплата получена`,
-    encryptedBody: encrypt(lines.join("\n")),
+  const methods = new Set(view.items.map((i) => i.deliveryMethod));
+  const pendingNote =
+    order.status === "DELIVERED"
+      ? undefined
+      : methods.has("TRADE_OFFER")
+        ? "Бот магазина отправит трейд-оффер на вашу trade-ссылку. Мы напишем, когда он уйдет."
+        : "Товар выдаст оператор. Мы напишем, когда заказ будет выдан.";
+  await queueEmail(order.email, "orderPaid", {
+    number: order.number,
+    totalMinor: order.totalMinor,
+    items: view.items.map((i) => ({ title: i.titleSnapshot, priceMinor: i.priceMinor })),
+    keys: view.keys,
+    orderUrl: `${env.APP_URL}/order/${order.accessToken}`,
+    pendingNote,
+  });
+}
+
+/** Письмо о проблеме с выдачей (заказ ушел в «Проблема»). */
+export async function notifyDeliveryProblem(orderId: string) {
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+  if (!order) return;
+  const cfg = await getSettings();
+  await queueEmail(order.email, "deliveryProblem", {
+    number: order.number,
+    orderUrl: `${env.APP_URL}/order/${order.accessToken}`,
+    reviewDays: cfg.refundReviewDays,
+  });
+}
+
+/** Письмо «трейд отправлен» — вызывает воркер ботов (этап 5) после отправки оффера. */
+export async function notifyTradeSent(orderId: string, itemTitle: string) {
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
+  if (!order) return;
+  await queueEmail(order.email, "tradeSent", {
+    number: order.number,
+    itemTitle,
+    tradeHoldDays: order.tradeHoldDays ?? 0,
+    orderUrl: `${env.APP_URL}/order/${order.accessToken}`,
   });
 }
 

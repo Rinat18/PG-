@@ -11,6 +11,9 @@ import { setUserBlocked, setUserRole } from "@/lib/admin/clients";
 import { saveSettings } from "@/lib/admin/settings";
 import { parseSom } from "@/lib/admin/page";
 import { formatKgs } from "@/lib/format";
+import { kickOutbox } from "@/lib/email/kick";
+import { requeueEmail } from "@/lib/email/outbox";
+import { assertCan } from "@/lib/admin/rbac";
 
 /**
  * Все действия админки. Право проверяется внутри сервисов src/lib/admin/* по текущему пользователю,
@@ -27,6 +30,7 @@ async function run(back: string, fn: () => Promise<string>): Promise<never> {
       ok = false;
     } else throw e;
   }
+  kickOutbox(); // письма покупателю (выдача, возврат) уходят сразу
   revalidatePath(back.split("?")[0]);
   const sep = back.includes("?") ? "&" : "?";
   redirect(`${back}${sep}${ok ? "ok" : "error"}=${encodeURIComponent(msg)}`);
@@ -178,5 +182,15 @@ export async function saveSettingsAction(f: FormData) {
     const input = Object.fromEntries([...f.entries()].filter(([k]) => !k.startsWith("$")).map(([k, v]) => [k, String(v).replace(",", ".")]));
     const changed = await saveSettings(await getCurrentUser(), input);
     return changed.length ? `Сохранено: ${changed.length} параметр(ов)` : "Изменений нет";
+  });
+}
+
+// ---------- Письма ----------
+
+export async function requeueEmailAction(f: FormData) {
+  await run("/admin/emails", async () => {
+    assertCan(await getCurrentUser(), "emails.view");
+    if (!(await requeueEmail(str(f, "emailId")))) throw new AdminActionError("Письмо уже отправлено");
+    return "Письмо поставлено в очередь повторно";
   });
 }

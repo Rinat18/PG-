@@ -20,7 +20,8 @@ export type Permission =
   | "balances.manage"
   | "payouts.manage"
   | "pii.view"
-  | "audit.view";
+  | "audit.view"
+  | "emails.view";
 
 type Role = SessionUser["role"];
 
@@ -41,9 +42,10 @@ const matrix: Record<Role, readonly Permission[]> = {
     "balances.manage",
     "payouts.manage",
     "audit.view",
+    "emails.view",
   ],
   // поддержка: заказы, выдача, возвраты, клиенты; без настроек, денег продавцов и паспортных данных
-  SUPPORT: ["admin.access", "dashboard.view", "orders.view", "orders.deliver", "refunds.manage", "clients.view"],
+  SUPPORT: ["admin.access", "dashboard.view", "orders.view", "orders.deliver", "refunds.manage", "clients.view", "emails.view"],
   // комплаенс: верификация и паспортные данные (только эта роль), просмотр балансов и сделок
   COMPLIANCE: ["admin.access", "dashboard.view", "orders.view", "clients.view", "balances.view", "pii.view", "audit.view"],
   BUYER: [],

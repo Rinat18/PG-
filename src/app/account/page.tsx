@@ -2,6 +2,7 @@ import Link from "next/link";
 import { listUserOrders } from "@/lib/account";
 import { requireUser } from "@/lib/auth/current";
 import { formatKgs, orderStatusLabel } from "@/lib/format";
+import { env } from "@/lib/env";
 import { EmailLoginForm } from "../login/EmailLoginForm";
 import { TradeUrlForm } from "./TradeUrlForm";
 
@@ -82,7 +83,7 @@ export default async function AccountPage() {
               <p className="text-xs text-muted">
                 Подтвердите email: на него приходят чеки и ключи, а заказы, оформленные без входа, появятся здесь.
               </p>
-              <EmailLoginForm next="/account" link defaultEmail={user.email ?? undefined} />
+              <EmailLoginForm next="/account" link defaultEmail={user.email ?? undefined} devMailbox={env.EMAIL_TRANSPORT === "dev"} />
             </>
           )}
         </section>

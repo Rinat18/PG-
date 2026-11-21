@@ -1,4 +1,5 @@
 import { handlePaymentWebhook } from "@/lib/orders/service";
+import { kickOutbox } from "@/lib/email/kick";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ provide
   const rawBody = await req.text();
   try {
     const res = await handlePaymentWebhook(provider, rawBody, req.headers);
+    kickOutbox();
     return Response.json({ result: res.result }, { status: res.httpStatus });
   } catch (e) {
     console.error("webhook error", e);

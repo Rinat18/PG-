@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current";
 import { safeNextPath } from "@/lib/auth/email-login";
+import { env } from "@/lib/env";
 import { EmailLoginForm } from "./EmailLoginForm";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <div className="card space-y-3 p-6">
         <div className="text-sm font-semibold">Войти по email</div>
         <p className="text-xs text-muted">Пришлем одноразовую ссылку. Заказы, оформленные на этот email без входа, появятся в кабинете.</p>
-        <EmailLoginForm next={next} />
+        <EmailLoginForm next={next} devMailbox={env.EMAIL_TRANSPORT === "dev"} />
       </div>
     </div>
   );

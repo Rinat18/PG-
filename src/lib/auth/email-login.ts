@@ -1,8 +1,9 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, emailOutbox, loginTokens, orders, users } from "@/db/schema";
-import { encrypt, randomToken, sha256 } from "@/lib/crypto";
+import { auditLog, loginTokens, orders, users } from "@/db/schema";
+import { queueEmail } from "@/lib/email/outbox";
+import { randomToken, sha256 } from "@/lib/crypto";
 import { env } from "@/lib/env";
 
 /** Вход по одноразовой ссылке: токен живет 15 минут, используется один раз, в базе — только хэш. */
@@ -57,19 +58,9 @@ export async function requestEmailLogin(
     ip: opts.ip,
   });
 
-  const link = `${env.APP_URL}/login/email?token=${token}`;
-  const purpose = opts.linkToUserId ? "подтвердить email в личном кабинете" : "войти на сайт";
-  await db.insert(emailOutbox).values({
-    to: email,
-    subject: opts.linkToUserId ? "Подтверждение email" : "Вход на сайт",
-    encryptedBody: encrypt(
-      [
-        `Чтобы ${purpose}, откройте ссылку (действует 15 минут, один раз):`,
-        link,
-        "",
-        "Если вы не запрашивали письмо, просто проигнорируйте его.",
-      ].join("\n"),
-    ),
+  await queueEmail(email, "loginLink", {
+    link: `${env.APP_URL}/login/email?token=${token}`,
+    purpose: opts.linkToUserId ? "confirm" : "login",
   });
 }
 

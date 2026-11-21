@@ -13,6 +13,7 @@ const nav: { href: string; label: string; perm: Permission }[] = [
   { href: "/admin/products", label: "Товары и ключи", perm: "products.manage" },
   { href: "/admin/clients", label: "Клиенты", perm: "clients.view" },
   { href: "/admin/balances", label: "Балансы и выплаты", perm: "balances.view" },
+  { href: "/admin/emails", label: "Письма", perm: "emails.view" },
   { href: "/admin/reports", label: "Отчеты", perm: "reports.view" },
   { href: "/admin/settings", label: "Настройки", perm: "settings.manage" },
   { href: "/admin/audit", label: "Журнал", perm: "audit.view" },

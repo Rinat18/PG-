@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { consumeEmailLogin, EmailLoginError, requestEmailLogin } from "@/lib/auth/email-login";
 import { getClientIp, getCurrentUser, startSession } from "@/lib/auth/current";
 import { allowFormByIp, isHoneypotTripped } from "@/lib/security/rate-limit";
+import { kickOutbox } from "@/lib/email/kick";
 
 export type EmailLoginState = { sent?: boolean; error?: string; email?: string };
 
@@ -26,6 +27,7 @@ export async function requestEmailLoginAction(_prev: EmailLoginState, form: Form
     console.error(e);
     return { error: "Не получилось отправить письмо. Попробуйте позже", email };
   }
+  kickOutbox();
   return { sent: true, email };
 }
 

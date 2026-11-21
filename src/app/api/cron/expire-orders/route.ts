@@ -1,13 +1,12 @@
-import { env } from "@/lib/env";
+import { isCronAuthorized } from "@/lib/cron";
 import { expireStaleOrders } from "@/lib/orders/service";
 
 export const dynamic = "force-dynamic";
 
-/** Вызывать по крону раз в минуту: Authorization: Bearer $CRON_SECRET */
-export async function POST(req: Request) {
-  if (!env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${env.CRON_SECRET}`) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const cancelled = await expireStaleOrders();
-  return Response.json({ cancelled });
+/** Раз в минуту: POST или GET с Authorization: Bearer $CRON_SECRET */
+async function handle(req: Request) {
+  if (!isCronAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  return Response.json({ cancelled: await expireStaleOrders() });
 }
+export const GET = handle;
+export const POST = handle;
