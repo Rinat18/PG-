@@ -47,7 +47,7 @@ async function newPaidableOrder(slug: string) {
 }
 
 beforeEach(async () => {
-  await db.execute(sql`truncate table webhook_events, email_outbox, refunds, trade_offers, payments, product_keys, order_items, orders, products, mock_provider_payments, audit_log cascade`);
+  await db.execute(sql`truncate table settings, webhook_events, email_outbox, refunds, trade_offers, payments, product_keys, order_items, orders, products, mock_provider_payments, audit_log cascade`);
 });
 afterAll(async () => {
   // пул закрывается вместе с процессом vitest

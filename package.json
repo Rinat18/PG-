@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "admin:grant": "tsx src/db/grant-role.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",

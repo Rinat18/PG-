@@ -6,12 +6,13 @@ Next.js 15 (App Router) + TypeScript + Tailwind 4 + PostgreSQL + Drizzle ORM.
 ## Запуск локально
 
 ```bash
-cp .env.example .env              # заполнить DATA_ENCRYPTION_KEY, MOCK_ELQR_WEBHOOK_SECRET, CRON_SECRET
+cp .env.example .env              # заполнить DATA_ENCRYPTION_KEY, MOCK_ELQR_WEBHOOK_SECRET, CRON_SECRET, SESSION_SECRET (+ STEAM_API_KEY)
 docker compose up -d              # PostgreSQL 16
 npm install
 npm run db:migrate
 npm run db:seed                   # тестовые товары и ключи (только для разработки!)
 npm run dev                       # http://localhost:3000
+npm run admin:grant -- you@example.com   # после первого входа: сделать себя администратором (/admin)
 ```
 
 Секреты: `openssl rand -base64 32` для DATA_ENCRYPTION_KEY, `openssl rand -hex 24` для остальных.
@@ -39,11 +40,19 @@ npm test
 | `src/app/api/payments/webhook/[provider]` | Callback провайдера |
 | `src/app/api/cron/expire-orders` | Крон раз в минуту: `POST` с `Authorization: Bearer $CRON_SECRET` |
 | `src/app/dev/mock-bank/[id]` | Тестовый банк (только при mock) |
-| `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки |
+| `src/lib/auth/` | Сессии (подписанная httpOnly-cookie), Steam OpenID 2.0, вход по одноразовой ссылке |
+| `src/lib/account.ts` | Кабинет: заказы и ключи только владельца, trade-ссылка только своего Steam |
+| `src/lib/steam/buyer-checks.ts` | Проверки покупателя скина через Steam Web API (`STEAM_CHECKS=mock` — только для разработки) |
+| `src/lib/admin/` | Админка: права ролей (`rbac.ts`, проверка в каждой функции), заказы и возвраты, товары и ключи CSV, клиенты, балансы продавцов и выплаты, отчеты |
+| `src/lib/settings.ts` | Параметры [__] из ТЗ в таблице `settings`, меняются в `/admin/settings` без деплоя |
+| `src/lib/payouts/` | Контракт сервиса выплат продавцам и mock |
+| `src/lib/security/` | Ограничение частоты по IP (в PostgreSQL) и honeypot |
+| `src/middleware.ts` | Редирект `/account/*` на `/login` без cookie сессии |
+| `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки; сессии, OpenID, вход по email, доступ к чужим заказам |
 
 ## Правила, которые нельзя ломать
 
-- Нет кейсов, рулеток, случайных выдач, внутреннего баланса, пополнения и вывода. Кейсы и капсулы фильтруются при синхронизации инвентаря и выставлении лотов.
+- Нет кейсов, рулеток, случайных выдач, пополняемого баланса покупателя и вывода. Баланс есть только у продавцов P2P: заработок со сделок минус выплаты на их реквизиты; корректировка админом — с причиной и в журнале. Кейсы и капсулы фильтруются при синхронизации инвентаря и выставлении лотов.
 - Выдача только в `handlePaymentWebhook` после проверки подписи. Опрос статуса через API провайдера товар не выдает, а только ставит заказ на проверку.
 - Один заказ = один платеж; повтор webhook ничего не выдает второй раз.
 - Оплата по просроченному заказу уходит на автоматический возврат.
@@ -55,8 +64,9 @@ npm test
 
 ## Дальше по этапам
 
-- [ ] Вход через Steam (OpenID) и по email, покупка скинов с trade-ссылкой
-- [ ] Админка: товары, загрузка ключей из CSV, заказы, ручная выдача Dota Plus, возвраты, роли
+- [x] Вход через Steam (OpenID) и по email, личный кабинет, привязка гостевых заказов
+- [x] Покупка скинов: вход через Steam, своя trade-ссылка, проверка инвентаря, трейд-бана и trade hold до QR
+- [x] Админка: товары, ключи из CSV, заказы, ручная выдача, возвраты, роли, отчеты, настройки, клиенты, балансы продавцов и выплаты (mock)
 - [ ] Воркер Steam-ботов: синхронизация инвентаря, очередь `trade_offers`
 - [ ] Отправка писем из `email_outbox` (SMTP)
 - [ ] P2P-маркет: верификация, лоты, сделки, выплаты (после согласования схемы с провайдером)

@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "trade_hold_days" integer;

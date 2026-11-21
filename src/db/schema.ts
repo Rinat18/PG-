@@ -99,12 +99,57 @@ export const users = pgTable(
     displayName: text("display_name"),
     avatarUrl: text("avatar_url"),
     role: userRoleEnum("role").notNull().default("BUYER"),
+    emailVerifiedAt: ts("email_verified_at"), // email подтвержден одноразовой ссылкой
     tradeUrl: text("trade_url"),
     isBlocked: boolean("is_blocked").notNull().default(false),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("users_steam_id_uq").on(t.steamId), index("users_email_idx").on(t.email)],
+  // email храним в нижнем регистре; один email — один аккаунт
+  (t) => [uniqueIndex("users_steam_id_uq").on(t.steamId), uniqueIndex("users_email_uq").on(t.email)],
 );
+
+/**
+ * Сессии. В cookie лежит `<token>.<hmac>`, в базе — sha256(token):
+ * утечка таблицы не дает войти, подделка cookie отсекается подписью.
+ */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(), // sha256(token)
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: ts("expires_at").notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+/** Одноразовые ссылки входа по email (15 минут). userId задан, если вошедший пользователь привязывает email. */
+export const loginTokens = pgTable(
+  "login_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tokenHash: text("token_hash").notNull(),
+    email: text("email").notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    nextPath: text("next_path"),
+    expiresAt: ts("expires_at").notNull(),
+    usedAt: ts("used_at"),
+    ip: text("ip"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("login_tokens_hash_uq").on(t.tokenHash), index("login_tokens_email_idx").on(t.email, t.createdAt)],
+);
+
+/** Счетчики ограничения частоты (по IP, email и т. п.) с фиксированным окном. */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  windowEndsAt: ts("window_ends_at").notNull(),
+});
 
 export const botAccounts = pgTable("bot_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -199,6 +244,7 @@ export const orders = pgTable(
     userId: uuid("user_id").references(() => users.id),
     email: text("email").notNull(),
     tradeUrl: text("trade_url"),
+    tradeHoldDays: integer("trade_hold_days"), // задержка обмена Steam на момент заказа (скины)
     status: orderStatusEnum("status").notNull().default("PENDING_PAYMENT"),
     totalMinor: integer("total_minor").notNull(),
     adultConfirmed: boolean("adult_confirmed").notNull(),
@@ -282,7 +328,9 @@ export const refunds = pgTable("refunds", {
     .references(() => payments.id),
   amountMinor: integer("amount_minor").notNull(),
   reason: text("reason").notNull(),
-  status: text("status").notNull().default("PENDING"), // PENDING | DONE | FAILED
+  status: text("status").notNull().default("PENDING"), // PENDING | PROCESSING | DONE | FAILED
+  requestedBy: text("requested_by"), // system | admin:<id>
+  attempts: integer("attempts").notNull().default(0),
   providerRefundId: text("provider_refund_id"),
   error: text("error"),
   createdAt: ts("created_at").notNull().defaultNow(),
@@ -383,10 +431,10 @@ export const deals = pgTable("deals", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
+/** Выплата продавцу с его баланса на реквизиты, указанные при верификации. dealId — если выплата по одной сделке. */
 export const payouts = pgTable("payouts", {
   id: uuid("id").primaryKey().defaultRandom(),
   dealId: uuid("deal_id")
-    .notNull()
     .references(() => deals.id)
     .unique(),
   sellerId: uuid("seller_id")
@@ -396,8 +444,46 @@ export const payouts = pgTable("payouts", {
   status: payoutStatusEnum("status").notNull().default("PENDING"),
   providerPayoutId: text("provider_payout_id"),
   error: text("error"),
+  requestedBy: text("requested_by"), // admin:<id>
   createdAt: ts("created_at").notNull().defaultNow(),
   sentAt: ts("sent_at"),
+});
+
+/**
+ * Баланс продавца P2P = сумма проводок. Пополнить баланс деньгами нельзя (ТЗ, разделы 1 и 6):
+ * плюс дают только заработок по сделке и корректировка администратора с причиной, минус — выплата.
+ */
+export const balanceEntryKindEnum = pgEnum("balance_entry_kind", [
+  "DEAL_EARNING", // цена сделки минус комиссия, после защиты от отката
+  "ADJUSTMENT", // ручная корректировка администратора (+/-), причина обязательна
+  "PAYOUT", // выплата на реквизиты (минус)
+  "PAYOUT_REVERSAL", // выплата не прошла — деньги возвращаются на баланс
+]);
+
+export const balanceEntries = pgTable(
+  "balance_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sellerId: uuid("seller_id")
+      .notNull()
+      .references(() => users.id),
+    kind: balanceEntryKindEnum("kind").notNull(),
+    amountMinor: integer("amount_minor").notNull(), // со знаком
+    dealId: uuid("deal_id").references(() => deals.id),
+    payoutId: uuid("payout_id").references(() => payouts.id),
+    reason: text("reason"),
+    actor: text("actor").notNull(), // system | admin:<id>
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("balance_entries_seller_idx").on(t.sellerId, t.createdAt)],
+);
+
+/** Настройки магазина, которые меняются из админки без деплоя. */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
 // ---------- Аудит ----------

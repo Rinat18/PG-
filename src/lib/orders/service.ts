@@ -1,10 +1,11 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import {
   auditLog,
   emailOutbox,
   orderItems,
+  users,
   orders,
   payments,
   productKeys,
@@ -18,6 +19,8 @@ import { env } from "@/lib/env";
 import { formatKgs } from "@/lib/format";
 import { getPaymentProvider } from "@/lib/payments";
 import type { PaymentWebhookEvent } from "@/lib/payments/types";
+import { getSettings } from "@/lib/settings";
+import { checkSkinBuyer, getSteamApi, SkinBuyerError, type SteamApi } from "@/lib/steam/buyer-checks";
 
 /** Оплата, пришедшая чуть позже таймера (задержка банка), еще принимается. */
 const LATE_PAYMENT_GRACE_MS = 2 * 60 * 1000;
@@ -30,6 +33,10 @@ export class OrderError extends Error {
       | "OUT_OF_STOCK"
       | "RATE_LIMIT"
       | "STEAM_LOGIN_REQUIRED"
+      | "TRADE_URL"
+      | "INVENTORY_PRIVATE"
+      | "TRADE_BAN"
+      | "STEAM_UNAVAILABLE"
       | "PAYMENT_PROVIDER",
     message: string,
   ) {
@@ -63,7 +70,14 @@ function newOrderNumber(): string {
   return `PG-${ymd}-${rnd}`;
 }
 
-export async function createOrder(input: CheckoutInput, ctx: { ip?: string; userId?: string } = {}) {
+export type CreateOrderContext = {
+  ip?: string;
+  userId?: string;
+  /** Клиент Steam Web API для проверок покупателя скина; undefined — из env, null — Steam недоступен */
+  steamApi?: SteamApi | null;
+};
+
+export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext = {}) {
   const parsed = checkoutSchema.safeParse(input);
   if (!parsed.success) throw new OrderError("VALIDATION", parsed.error.issues[0]?.message ?? "Проверьте форму");
   const data = parsed.data;
@@ -79,18 +93,50 @@ export async function createOrder(input: CheckoutInput, ctx: { ip?: string; user
     throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
   }
 
-  // Антифрод: не более N заказов с одного email в час (ТЗ, раздел 7)
+  const cfg = await getSettings();
+
+  // Антифрод: не более N заказов с одного email или аккаунта в час (ТЗ, раздел 7)
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(orders)
-    .where(and(eq(orders.email, data.email), gte(orders.createdAt, hourAgo)));
-  if (count >= env.MAX_ORDERS_PER_EMAIL_PER_HOUR) {
+    .where(
+      and(
+        ctx.userId ? or(eq(orders.email, data.email), eq(orders.userId, ctx.userId)) : eq(orders.email, data.email),
+        gte(orders.createdAt, hourAgo),
+      ),
+    );
+  if (count >= cfg.maxOrdersPerHour) {
     throw new OrderError("RATE_LIMIT", "Слишком много заказов за час. Попробуйте позже или напишите в поддержку");
   }
 
-  const expiresAt = new Date(Date.now() + env.ORDER_TTL_MINUTES * 60 * 1000);
-  const needsReview = env.REVIEW_THRESHOLD_MINOR !== undefined && product.priceMinor > env.REVIEW_THRESHOLD_MINOR;
+  // Скин: вход через Steam, своя trade-ссылка, открытый инвентарь, нет трейд-бана — до создания QR
+  let tradeUrl = data.tradeUrl;
+  let tradeHoldDays: number | null = null;
+  let buyer: typeof users.$inferSelect | undefined;
+  if (product.type === "SHOP_SKIN") {
+    [buyer] = await db.select().from(users).where(eq(users.id, ctx.userId!));
+    if (!buyer?.steamId || buyer.isBlocked) {
+      throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
+    }
+    if (product.soldAt || product.reservedByOrderId) throw new OrderError("OUT_OF_STOCK", "Скин уже купили или он оплачивается");
+    tradeUrl = tradeUrl ?? buyer.tradeUrl ?? undefined;
+    if (!tradeUrl) throw new OrderError("TRADE_URL", "Укажите trade-ссылку Steam: на нее бот отправит скин");
+    if (product.game !== "CS2" && product.game !== "DOTA2") throw new OrderError("NOT_FOUND", "Товар не найден");
+    try {
+      const res = await checkSkinBuyer(
+        { steamId: buyer.steamId, tradeUrl, game: product.game },
+        ctx.steamApi === undefined ? getSteamApi() : ctx.steamApi,
+      );
+      tradeHoldDays = res.tradeHoldDays;
+    } catch (e) {
+      if (e instanceof SkinBuyerError) throw new OrderError(e.code, e.message);
+      throw e;
+    }
+  }
+
+  const expiresAt = new Date(Date.now() + cfg.orderTtlMinutes * 60 * 1000);
+  const needsReview = cfg.reviewThresholdSom > 0 && product.priceMinor > cfg.reviewThresholdSom * 100;
 
   const order = await db.transaction(async (tx) => {
     const [order] = await tx
@@ -100,7 +146,8 @@ export async function createOrder(input: CheckoutInput, ctx: { ip?: string; user
         accessToken: randomToken(),
         userId: ctx.userId,
         email: data.email,
-        tradeUrl: data.tradeUrl,
+        tradeUrl,
+        tradeHoldDays,
         totalMinor: product.priceMinor,
         adultConfirmed: true,
         offerAccepted: true,
@@ -172,8 +219,21 @@ export async function createOrder(input: CheckoutInput, ctx: { ip?: string; user
     throw new OrderError("PAYMENT_PROVIDER", `Не удалось создать QR для оплаты: ${(e as Error).message}`);
   }
 
-  await audit("system", "order.created", "order", order.id, { product: product.slug, needsReview });
+  if (buyer && !buyer.tradeUrl && tradeUrl) {
+    // проверенная ссылка пригодится в следующий раз
+    await db.update(users).set({ tradeUrl }).where(eq(users.id, buyer.id));
+  }
+  await audit("system", "order.created", "order", order.id, { product: product.slug, needsReview, tradeHoldDays });
   return order;
+}
+
+/** Покупатель передумал до оплаты: заказ отменяется, резерв скина или ключа снимается сразу. */
+export async function cancelPendingOrderByBuyer(accessToken: string): Promise<boolean> {
+  const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.accessToken, accessToken));
+  if (!order) return false;
+  const ok = await db.transaction((tx) => cancelOrder(tx, order.id, "cancelled_by_buyer"));
+  if (ok) await audit("buyer", "order.cancelled_by_buyer", "order", order.id, {});
+  return ok;
 }
 
 // ---------- Отмена и истечение ----------
@@ -385,8 +445,13 @@ async function fulfillOrder(tx: Tx, orderId: string): Promise<boolean> {
 // ---------- Возвраты ----------
 
 export async function processRefund(refundId: string) {
-  const [refund] = await db.select().from(refunds).where(eq(refunds.id, refundId));
-  if (!refund || refund.status !== "PENDING") return;
+  // Захват возврата условным UPDATE: параллельные вызовы не отправят провайдеру второй возврат
+  const [refund] = await db
+    .update(refunds)
+    .set({ status: "PROCESSING", attempts: sql`${refunds.attempts} + 1`, error: null })
+    .where(and(eq(refunds.id, refundId), eq(refunds.status, "PENDING")))
+    .returning();
+  if (!refund) return;
   const [payment] = await db.select().from(payments).where(eq(payments.id, refund.paymentId));
   const provider = getPaymentProvider(payment.provider);
   try {

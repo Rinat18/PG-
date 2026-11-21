@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ProductArt } from "@/components/ProductCard";
 import { getProduct } from "@/lib/catalog";
 import { formatKgs, gameLabel, productTypeLabel } from "@/lib/format";
+import { getCurrentUser } from "@/lib/auth/current";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   if (!p) notFound();
   const unavailable = p.stock === 0 || p.isReserved || Boolean(p.soldAt);
   const isSkin = p.type === "SHOP_SKIN";
+  const user = isSkin ? await getCurrentUser() : null;
 
   const specs: [string, string | undefined][] = isSkin
     ? [
@@ -76,15 +78,22 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
           </div>
           {unavailable ? (
             <button disabled className="btn-primary w-full">{p.isReserved ? "Сейчас оплачивается другим покупателем" : "Нет в наличии"}</button>
-          ) : isSkin ? (
+          ) : isSkin && !user?.steamId ? (
             <div className="space-y-2">
-              <button disabled className="btn-primary w-full">Войти через Steam, чтобы купить</button>
-              <p className="text-xs text-muted">Вход через Steam подключаем следующим шагом.</p>
+              <a href={`/api/auth/steam?next=${encodeURIComponent(`/checkout/${p.slug}`)}`} className="btn-primary w-full">
+                Войти через Steam, чтобы купить
+              </a>
+              <p className="text-xs text-muted">Скин придет трейд-оффером на ваш аккаунт Steam, поэтому нужен вход через Steam.</p>
             </div>
           ) : (
             <Link href={`/checkout/${p.slug}`} className="btn-primary w-full">Купить</Link>
           )}
           <p className="text-xs text-muted">Оплата по QR ELQR. Товар выдается только после подтверждения оплаты банком.</p>
+          {isSkin && (
+            <p className="text-xs text-muted">
+              Steam может задержать обмен (trade hold). <Link href="/info/payment" className="text-accent underline">Подробнее</Link>
+            </p>
+          )}
         </div>
 
         {p.activationInstructions && (
