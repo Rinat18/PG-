@@ -244,6 +244,7 @@ export const orders = pgTable(
     userId: uuid("user_id").references(() => users.id),
     email: text("email").notNull(),
     tradeUrl: text("trade_url"),
+    tradeHoldDays: integer("trade_hold_days"), // задержка обмена Steam на момент заказа (скины)
     status: orderStatusEnum("status").notNull().default("PENDING_PAYMENT"),
     totalMinor: integer("total_minor").notNull(),
     adultConfirmed: boolean("adult_confirmed").notNull(),

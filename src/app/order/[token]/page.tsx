@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { getOrderForBuyer } from "@/lib/orders/service";
 import { formatKgs, orderStatusLabel } from "@/lib/format";
 import { PaymentWaiter } from "./PaymentWaiter";
+import { cancelOrderAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Заказ", robots: { index: false } };
@@ -23,6 +24,7 @@ export default async function OrderPage({ params }: { params: Promise<{ token: s
   const view = await getOrderForBuyer(token);
   if (!view) notFound();
   const { order, payment, items, keys } = view;
+  const isSkinOrder = items.some((i) => i.deliveryMethod === "TRADE_OFFER");
 
   const qrDataUrl =
     order.status === "PENDING_PAYMENT" && payment
@@ -78,6 +80,25 @@ export default async function OrderPage({ params }: { params: Promise<{ token: s
             </div>
           )}
           <PaymentWaiter token={token} expiresAt={payment.expiresAt.toISOString()} />
+          <form action={cancelOrderAction} className="text-right">
+            <input type="hidden" name="token" value={token} />
+            <button className="text-xs text-muted underline hover:text-text">Отменить заказ</button>
+          </form>
+        </div>
+      )}
+
+      {isSkinOrder && order.tradeUrl && (
+        <div className="card space-y-2 p-4 text-sm">
+          <div className="font-semibold">Выдача скина</div>
+          <div className="break-all text-xs text-muted">Trade-ссылка: {order.tradeUrl}</div>
+          {order.tradeHoldDays ? (
+            <p className="text-accent">
+              Steam задерживает обмены на вашем аккаунте на {order.tradeHoldDays} дн. (trade hold): скин придет после окончания
+              задержки. Чтобы ее не было, включите мобильный аутентификатор Steam Guard.
+            </p>
+          ) : (
+            <p className="text-muted">Задержки обмена (trade hold) на аккаунте нет.</p>
+          )}
         </div>
       )}
 
@@ -95,11 +116,21 @@ export default async function OrderPage({ params }: { params: Promise<{ token: s
       )}
 
       {order.status === "PAID" && keys.length === 0 && (
-        <Notice tone="ok">Оплата получена. Товар выдаст оператор, статус обновится на этой странице и придет на почту.</Notice>
+        <Notice tone="ok">
+          {isSkinOrder
+            ? "Оплата получена. Бот магазина отправит трейд-оффер на вашу trade-ссылку; примите его в Steam. Статус обновится здесь и придет на почту."
+            : "Оплата получена. Товар выдаст оператор, статус обновится на этой странице и придет на почту."}
+        </Notice>
+      )}
+      {order.status === "TRADE_SENT" && (
+        <Notice tone="ok">
+          Трейд-оффер отправлен. Откройте Steam → Предложения обмена и примите его. Если Steam включил trade hold, предмет придет
+          после окончания задержки.
+        </Notice>
       )}
       {order.status === "CANCELLED" && (
         <Notice>
-          Заказ отменен: оплата не поступила за 15 минут. <Link href="/" className="text-accent underline">Вернуться в магазин</Link>
+          Заказ отменен{order.problemReason === "cancelled_by_buyer" ? "" : ": оплата не поступила за 15 минут"}. <Link href="/" className="text-accent underline">Вернуться в магазин</Link>
         </Notice>
       )}
       {order.status === "REFUNDED" && <Notice>Деньги по заказу возвращены на счет, с которого была оплата.</Notice>}

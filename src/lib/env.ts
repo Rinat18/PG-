@@ -16,6 +16,12 @@ const schema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30), // срок жизни сессии [__] дней
   // Ключ Steam Web API (имя и аватар, в этапе 2 — проверки инвентаря): https://steamcommunity.com/dev/apikey
   STEAM_API_KEY: z.string().optional().transform((v) => v || undefined),
+  // real — проверки покупателя скина через Steam Web API; mock — без Steam, только для разработки
+  STEAM_CHECKS: z.enum(["real", "mock"]).default("real"),
 });
 
-export const env = schema.parse(process.env);
+export const env = schema
+  .refine((e) => e.STEAM_CHECKS === "real" || e.PAYMENT_PROVIDER === "mock", {
+    message: "STEAM_CHECKS=mock допустим только с PAYMENT_PROVIDER=mock",
+  })
+  .parse(process.env);

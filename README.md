@@ -41,6 +41,7 @@ npm test
 | `src/app/dev/mock-bank/[id]` | Тестовый банк (только при mock) |
 | `src/lib/auth/` | Сессии (подписанная httpOnly-cookie), Steam OpenID 2.0, вход по одноразовой ссылке |
 | `src/lib/account.ts` | Кабинет: заказы и ключи только владельца, trade-ссылка только своего Steam |
+| `src/lib/steam/buyer-checks.ts` | Проверки покупателя скина через Steam Web API (`STEAM_CHECKS=mock` — только для разработки) |
 | `src/lib/security/` | Ограничение частоты по IP (в PostgreSQL) и honeypot |
 | `src/middleware.ts` | Редирект `/account/*` на `/login` без cookie сессии |
 | `tests/` | Подпись, идемпотентность, просрочка, поддельный webhook, остатки; сессии, OpenID, вход по email, доступ к чужим заказам |
@@ -60,7 +61,7 @@ npm test
 ## Дальше по этапам
 
 - [x] Вход через Steam (OpenID) и по email, личный кабинет, привязка гостевых заказов
-- [ ] Покупка скинов с trade-ссылкой и проверками Steam API
+- [x] Покупка скинов: вход через Steam, своя trade-ссылка, проверка инвентаря, трейд-бана и trade hold до QR
 - [ ] Админка: товары, загрузка ключей из CSV, заказы, ручная выдача Dota Plus, возвраты, роли
 - [ ] Воркер Steam-ботов: синхронизация инвентаря, очередь `trade_offers`
 - [ ] Отправка писем из `email_outbox` (SMTP)

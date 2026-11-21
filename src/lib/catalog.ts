@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gte, ilike, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { products } from "@/db/schema";
+import { expireStaleOrders } from "@/lib/orders/service";
 
 export type CatalogFilters = {
   game?: "CS2" | "DOTA2" | "OTHER";
@@ -24,10 +25,12 @@ const stockExpr = sql<number>`(
 const visible = and(
   eq(products.isActive, true),
   isNull(products.soldAt),
-  or(isNull(products.reservedByOrderId), sql`${products.reservedUntil} < now()`),
+  // резерв снимает отмена заказа (крон / ленивая проверка), с учетом окна поздней оплаты
+  isNull(products.reservedByOrderId),
 );
 
 export async function listProducts(f: CatalogFilters, limit = 48) {
+  await expireStaleOrders(); // лениво снимаем просроченные резервы, даже если крон не настроен
   const where: (SQL | undefined)[] = [visible];
   if (f.game) where.push(eq(products.game, f.game));
   if (f.type) where.push(eq(products.type, f.type as typeof products.$inferSelect.type));
@@ -56,13 +59,13 @@ export async function listProducts(f: CatalogFilters, limit = 48) {
 }
 
 export async function getProduct(slug: string) {
+  await expireStaleOrders();
   const [row] = await db
     .select({ product: products, stock: stockExpr })
     .from(products)
     .where(and(eq(products.slug, slug), eq(products.isActive, true)));
   if (!row) return null;
-  const reserved = row.product.reservedByOrderId && row.product.reservedUntil && row.product.reservedUntil > new Date();
-  return { ...row.product, stock: inStock(row.product, row.stock), isReserved: Boolean(reserved) };
+  return { ...row.product, stock: inStock(row.product, row.stock), isReserved: Boolean(row.product.reservedByOrderId) };
 }
 
 /** null = товар без складского учета (выдача оператором / подарком). */

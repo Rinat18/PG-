@@ -5,7 +5,17 @@ import { useActionState } from "react";
 import { Honeypot } from "@/components/Honeypot";
 import { checkoutAction, type CheckoutState } from "./actions";
 
-export function CheckoutForm({ slug, needsTradeUrl, defaultEmail }: { slug: string; needsTradeUrl: boolean; defaultEmail?: string }) {
+export function CheckoutForm({
+  slug,
+  needsTradeUrl,
+  defaultEmail,
+  defaultTradeUrl,
+}: {
+  slug: string;
+  needsTradeUrl: boolean;
+  defaultEmail?: string;
+  defaultTradeUrl?: string;
+}) {
   const [state, action, pending] = useActionState<CheckoutState, FormData>(checkoutAction, {});
   return (
     <form action={action} className="relative space-y-4">
@@ -17,8 +27,18 @@ export function CheckoutForm({ slug, needsTradeUrl, defaultEmail }: { slug: stri
       </label>
       {needsTradeUrl && (
         <label className="block space-y-1.5">
-          <span className="text-sm">Trade-ссылка Steam</span>
-          <input name="tradeUrl" required className="input" placeholder="https://steamcommunity.com/tradeoffer/new/?partner=...&token=..." />
+          <span className="text-sm">
+            Trade-ссылка Steam{" "}
+            <a
+              href="https://steamcommunity.com/my/tradeoffers/privacy#trade_offer_access_url"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-accent underline"
+            >
+              где взять
+            </a>
+          </span>
+          <input name="tradeUrl" required defaultValue={state.values?.tradeUrl ?? defaultTradeUrl} className="input" placeholder="https://steamcommunity.com/tradeoffer/new/?partner=...&token=..." />
         </label>
       )}
       <label className="flex items-start gap-2 text-sm">
