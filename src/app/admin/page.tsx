@@ -23,6 +23,8 @@ export default async function AdminDashboard() {
         <Stat label="Проблемных заказов" value={s.problems} href="/admin/orders?status=PROBLEM" tone={s.problems ? "bad" : undefined} />
         <Stat label="Неудавшихся возвратов" value={s.failed_refunds} href="/admin/refunds?status=FAILED" tone={s.failed_refunds ? "bad" : undefined} />
         <Stat label="Заявок на верификацию" value={s.verification_queue} />
+        {can(user, "bots.view") && <Stat label="Боты не в сети" value={s.bots_down} href="/admin/bots" tone={s.bots_down ? "bad" : undefined} />}
+        {can(user, "bots.view") && <Stat label="Трейдов в очереди" value={s.trades_queued} href="/admin/bots" />}
       </div>
     </>
   );

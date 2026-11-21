@@ -99,6 +99,11 @@ export async function saveProduct(actor: SessionUser | null, id: string | null, 
 
 export async function setProductActive(actor: SessionUser | null, id: string, isActive: boolean) {
   assertCan(actor, "products.manage");
+  if (isActive) {
+    const [p] = await db.select({ price: products.priceMinor }).from(products).where(eq(products.id, id));
+    if (!p) throw new AdminActionError("Товар не найден");
+    if (p.price <= 0) throw new AdminActionError("Сначала укажите цену");
+  }
   await db.update(products).set({ isActive }).where(eq(products.id, id));
   await writeAudit(actorOf(actor), isActive ? "product.shown" : "product.hidden", "product", id);
 }
@@ -168,4 +173,21 @@ export async function disableKey(actor: SessionUser | null, keyId: string) {
     .returning({ productId: productKeys.productId });
   if (!res.length) throw new AdminActionError("Отключить можно только свободный ключ");
   await writeAudit(actorOf(actor), "key.disabled", "product", res[0].productId, { keyId });
+}
+
+/** Массовая установка цен скинов (после синхронизации инвентаря ботов они приходят без цены и скрытыми). */
+export async function setSkinPrices(actor: SessionUser | null, rows: { id: string; priceMinor: number; show: boolean }[]) {
+  assertCan(actor, "products.manage");
+  let updated = 0;
+  for (const r of rows) {
+    if (!Number.isInteger(r.priceMinor) || r.priceMinor <= 0 || r.priceMinor > 1_000_000_000) continue;
+    const res = await db
+      .update(products)
+      .set({ priceMinor: r.priceMinor, isActive: r.show })
+      .where(and(eq(products.id, r.id), eq(products.type, "SHOP_SKIN"), sql`${products.soldAt} is null`))
+      .returning({ id: products.id });
+    updated += res.length;
+  }
+  if (updated) await writeAudit(actorOf(actor), "skins.priced", "product", null, { count: updated });
+  return updated;
 }

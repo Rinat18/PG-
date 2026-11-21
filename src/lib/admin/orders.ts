@@ -1,6 +1,6 @@
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, orderItems, orders, payments, products, refunds, tradeOffers, webhookEvents } from "@/db/schema";
+import { auditLog, botAccounts, orderItems, orders, payments, products, refunds, tradeOffers, webhookEvents } from "@/db/schema";
 import type { SessionUser } from "@/lib/auth/session";
 import { queueEmail } from "@/lib/email/outbox";
 import { env } from "@/lib/env";
@@ -129,13 +129,25 @@ export async function refundOrder(actor: SessionUser | null, orderId: string, re
       .values({ paymentId: payment.id, amountMinor: payment.amountMinor, reason: why, requestedBy: actorOf(actor) })
       .returning({ id: refunds.id });
 
-    // скин, который еще не отправлен ботом, возвращается в каталог
+    // скин, который так и не ушел от бота (оффер в очереди, не отправлен или отклонен), возвращается в каталог;
+    // отправленный оффер воркер отменит сам, увидев возврат
     const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, o.id));
-    const cancelled = await tx
+    const itemIds = items.map((i) => i.id);
+    await tx
       .update(tradeOffers)
       .set({ status: "FAILED", lastError: "order_refunded", updatedAt: new Date() })
-      .where(and(inArray(tradeOffers.orderItemId, items.map((i) => i.id)), eq(tradeOffers.status, "QUEUED")))
-      .returning({ itemId: tradeOffers.orderItemId });
+      .where(and(inArray(tradeOffers.orderItemId, itemIds), eq(tradeOffers.status, "QUEUED")));
+    const cancelled = await tx
+      .select({ itemId: tradeOffers.orderItemId })
+      .from(tradeOffers)
+      .where(
+        and(
+          inArray(tradeOffers.orderItemId, itemIds),
+          inArray(tradeOffers.status, ["FAILED", "DECLINED"]),
+          sql`not exists (select 1 from trade_offers t2 where t2.order_item_id = ${tradeOffers.orderItemId}
+            and t2.status in ('SENT','ACCEPTED','IN_ESCROW'))`,
+        ),
+      );
     for (const c of cancelled) {
       const productId = items.find((i) => i.id === c.itemId)?.productId;
       if (productId) {
@@ -180,3 +192,47 @@ export async function listRefunds(actor: SessionUser | null, status?: string) {
     .limit(200);
 }
 
+
+/** Повтор упавшего трейда: оффер снова в очередь, заказ из «Проблема» обратно в «Оплачен». */
+export async function requeueTradeOffer(actor: SessionUser | null, offerId: string) {
+  assertCan(actor, "orders.deliver");
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ offer: tradeOffers, order: orders })
+      .from(tradeOffers)
+      .innerJoin(orderItems, eq(orderItems.id, tradeOffers.orderItemId))
+      .innerJoin(orders, eq(orders.id, orderItems.orderId))
+      .where(eq(tradeOffers.id, offerId))
+      .for("update");
+    if (!row) throw new AdminActionError("Трейд не найден");
+    if (!["FAILED", "DECLINED"].includes(row.offer.status)) throw new AdminActionError("Повторить можно только неудавшийся трейд");
+    if (!["PROBLEM", "PAID"].includes(row.order.status)) throw new AdminActionError(`Заказ в статусе ${row.order.status} — повтор невозможен`);
+    const [payment] = await tx.select().from(payments).where(eq(payments.orderId, row.order.id));
+    if (payment?.status !== "SUCCEEDED") throw new AdminActionError("Оплата по заказу не в статусе «успешно»");
+    await tx
+      .update(tradeOffers)
+      .set({ status: "QUEUED", attempts: 0, nextAttemptAt: null, lastError: null, steamOfferId: null, sentAt: null, finishedAt: null, updatedAt: new Date() })
+      .where(eq(tradeOffers.id, offerId));
+    await tx.update(orders).set({ status: "PAID", needsReview: false, problemReason: null }).where(eq(orders.id, row.order.id));
+    await writeAudit(actorOf(actor), "trade.requeued", "order", row.order.id, { offerId }, tx);
+  });
+}
+
+export async function listBotsAdmin(actor: SessionUser | null) {
+  assertCan(actor, "bots.view");
+  const bots = await db.select().from(botAccounts).orderBy(botAccounts.name);
+  const offers = await db
+    .select({ offer: tradeOffers, orderId: orders.id, number: orders.number, title: orderItems.titleSnapshot })
+    .from(tradeOffers)
+    .innerJoin(orderItems, eq(orderItems.id, tradeOffers.orderItemId))
+    .innerJoin(orders, eq(orders.id, orderItems.orderId))
+    .orderBy(desc(tradeOffers.updatedAt))
+    .limit(100);
+  const unpriced = await db
+    .select()
+    .from(products)
+    .where(and(eq(products.type, "SHOP_SKIN"), eq(products.priceMinor, 0), sql`${products.soldAt} is null`))
+    .orderBy(desc(products.createdAt))
+    .limit(200);
+  return { bots, offers, unpriced };
+}
