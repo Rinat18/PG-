@@ -354,17 +354,28 @@ export const tradeOffers = pgTable("trade_offers", {
 });
 
 /**
- * Исходящие письма. Пока без SMTP: пишем в таблицу, отправку подключим позже.
- * Тело шифруется, потому что в письме может быть ключ активации.
+ * Исходящие письма. Тело (текст и HTML) шифруется: в письме может быть ключ активации.
+ * Отправка — кроном /api/cron/send-emails с повторами (src/lib/email/outbox.ts).
  */
-export const emailOutbox = pgTable("email_outbox", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  to: text("to").notNull(),
-  subject: text("subject").notNull(),
-  encryptedBody: text("encrypted_body").notNull(),
-  sentAt: ts("sent_at"),
-  createdAt: ts("created_at").notNull().defaultNow(),
-});
+export const emailOutbox = pgTable(
+  "email_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    to: text("to").notNull(),
+    subject: text("subject").notNull(),
+    template: text("template"),
+    encryptedBody: text("encrypted_body").notNull(), // текстовая версия
+    encryptedHtml: text("encrypted_html"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"), // только текст ошибки SMTP, без тела письма
+    nextAttemptAt: ts("next_attempt_at"),
+    lockedUntil: ts("locked_until"),
+    failedAt: ts("failed_at"), // попытки исчерпаны
+    sentAt: ts("sent_at"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("email_outbox_pending_idx").on(t.sentAt, t.failedAt, t.nextAttemptAt)],
+);
 
 // ---------- P2P-маркет (раздел 5.1, этап 4) ----------
 

@@ -6,6 +6,8 @@ import { decrypt } from "@/lib/crypto";
 import { formatKgs } from "@/lib/format";
 import { getPayoutProvider } from "@/lib/payouts";
 import { getSettings } from "@/lib/settings";
+import { queueEmail } from "@/lib/email/outbox";
+import { maskDetails } from "@/lib/email/templates";
 import { writeAudit } from "@/lib/audit";
 import { AdminActionError } from "./orders";
 import { actorOf, assertCan } from "./rbac";
@@ -153,6 +155,10 @@ export async function createPayout(actor: SessionUser | null, sellerId: string, 
       .set({ status: "SENT", providerPayoutId: res.providerPayoutId, sentAt: new Date() })
       .where(eq(payouts.id, prepared.payout.id));
     await writeAudit(actorOf(actor), "payout.sent", "user", sellerId, { payoutId: prepared.payout.id });
+    const [seller] = await db.select({ email: users.email }).from(users).where(eq(users.id, sellerId));
+    if (seller?.email) {
+      await queueEmail(seller.email, "payoutSent", { amountMinor, detailsMasked: maskDetails(prepared.details) });
+    }
     return { payoutId: prepared.payout.id, status: "SENT" as const };
   } catch (e) {
     const error = (e as Error).message;

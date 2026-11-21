@@ -4,12 +4,27 @@ import { useActionState } from "react";
 import { Honeypot } from "@/components/Honeypot";
 import { requestEmailLoginAction, type EmailLoginState } from "./actions";
 
-export function EmailLoginForm({ next, link, defaultEmail }: { next: string; link?: boolean; defaultEmail?: string }) {
+export function EmailLoginForm({
+  next,
+  link,
+  defaultEmail,
+  devMailbox,
+}: {
+  next: string;
+  link?: boolean;
+  defaultEmail?: string;
+  devMailbox?: boolean;
+}) {
   const [state, action, pending] = useActionState<EmailLoginState, FormData>(requestEmailLoginAction, {});
   if (state.sent) {
     return (
       <div className="rounded-lg border border-ok/40 bg-ok/10 px-3 py-2 text-sm">
         Мы отправили ссылку на <b>{state.email}</b>. Она действует 15 минут.
+        {devMailbox && (
+          <>
+            {" "}Режим разработки: письмо в <a href="/dev/mail" className="underline">тестовой почте</a>.
+          </>
+        )}
       </div>
     );
   }

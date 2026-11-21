@@ -1,8 +1,8 @@
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, emailOutbox, orderItems, orders, payments, products, refunds, tradeOffers, webhookEvents } from "@/db/schema";
+import { auditLog, orderItems, orders, payments, products, refunds, tradeOffers, webhookEvents } from "@/db/schema";
 import type { SessionUser } from "@/lib/auth/session";
-import { encrypt } from "@/lib/crypto";
+import { queueEmail } from "@/lib/email/outbox";
 import { env } from "@/lib/env";
 import { processRefund } from "@/lib/orders/service";
 import { writeAudit } from "@/lib/audit";
@@ -92,17 +92,11 @@ export async function markOrderDelivered(actor: SessionUser | null, orderId: str
     await writeAudit(actorOf(actor), "order.delivered_manually", "order", o.id, { note: note.slice(0, 500) }, tx);
     return { ...o, items };
   });
-  await db.insert(emailOutbox).values({
-    to: order.email,
-    subject: `Заказ ${order.number} выдан`,
-    encryptedBody: encrypt(
-      [
-        `Заказ ${order.number} выдан.`,
-        ...order.items.map((i) => `• ${i.titleSnapshot}`),
-        note.trim() ? `\nКомментарий оператора: ${note.trim()}` : "",
-        `\nЗаказ: ${env.APP_URL}/order/${order.accessToken}`,
-      ].join("\n"),
-    ),
+  await queueEmail(order.email, "orderDelivered", {
+    number: order.number,
+    items: order.items.map((i) => i.titleSnapshot),
+    note: note.trim() || undefined,
+    orderUrl: `${env.APP_URL}/order/${order.accessToken}`,
   });
 }
 

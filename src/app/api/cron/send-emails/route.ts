@@ -1,0 +1,12 @@
+import { isCronAuthorized } from "@/lib/cron";
+import { processOutbox } from "@/lib/email/outbox";
+
+export const dynamic = "force-dynamic";
+
+/** Раз в минуту: POST или GET с Authorization: Bearer $CRON_SECRET. */
+async function handle(req: Request) {
+  if (!isCronAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  return Response.json(await processOutbox());
+}
+export const GET = handle;
+export const POST = handle;

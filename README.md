@@ -28,6 +28,7 @@ npm test
 1. Главная → CS2 Prime Status → «Купить» → email + 18+ + оферта.
 2. На странице заказа QR и таймер 15 минут. В режиме `PAYMENT_PROVIDER=mock` есть ссылка «страница тестового банка».
 3. «Оплатить» в тестовом банке → банк шлет подписанный webhook → страница заказа сама показывает ключ.
+4. Письмо с ключом — на `/dev/mail` (без SMTP письма никуда не уходят). Для реальной отправки: `EMAIL_TRANSPORT=smtp` и `SMTP_*` в `.env`.
 
 ## Структура
 
@@ -38,7 +39,10 @@ npm test
 | `src/lib/payments/` | Контракт провайдера ELQR и mock-провайдер |
 | `src/lib/crypto.ts` | AES-256-GCM для ключей активации и паспортных данных |
 | `src/app/api/payments/webhook/[provider]` | Callback провайдера |
-| `src/app/api/cron/expire-orders` | Крон раз в минуту: `POST` с `Authorization: Bearer $CRON_SECRET` |
+| `src/app/api/cron/expire-orders` | Крон раз в минуту: `GET`/`POST` с `Authorization: Bearer $CRON_SECRET` |
+| `src/app/api/cron/send-emails` | Крон раз в минуту: отправка писем из очереди (тот же заголовок) |
+| `src/lib/email/` | Шаблоны писем, очередь `email_outbox` с повторами, SMTP (nodemailer) |
+| `src/app/dev/mail` | Тестовая почта (только `EMAIL_TRANSPORT=dev` и mock-оплата) |
 | `src/app/dev/mock-bank/[id]` | Тестовый банк (только при mock) |
 | `src/lib/auth/` | Сессии (подписанная httpOnly-cookie), Steam OpenID 2.0, вход по одноразовой ссылке |
 | `src/lib/account.ts` | Кабинет: заказы и ключи только владельца, trade-ссылка только своего Steam |
@@ -68,6 +72,6 @@ npm test
 - [x] Покупка скинов: вход через Steam, своя trade-ссылка, проверка инвентаря, трейд-бана и trade hold до QR
 - [x] Админка: товары, ключи из CSV, заказы, ручная выдача, возвраты, роли, отчеты, настройки, клиенты, балансы продавцов и выплаты (mock)
 - [ ] Воркер Steam-ботов: синхронизация инвентаря, очередь `trade_offers`
-- [ ] Отправка писем из `email_outbox` (SMTP)
+- [x] Письма: шаблоны, очередь `email_outbox` с повторами, SMTP; тестовая почта `/dev/mail`
 - [ ] P2P-маркет: верификация, лоты, сделки, выплаты (после согласования схемы с провайдером)
 - [ ] Финальные тексты оферты, правил возврата, политики конфиденциальности; реквизиты вместо [__]
