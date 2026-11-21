@@ -328,7 +328,9 @@ export const refunds = pgTable("refunds", {
     .references(() => payments.id),
   amountMinor: integer("amount_minor").notNull(),
   reason: text("reason").notNull(),
-  status: text("status").notNull().default("PENDING"), // PENDING | DONE | FAILED
+  status: text("status").notNull().default("PENDING"), // PENDING | PROCESSING | DONE | FAILED
+  requestedBy: text("requested_by"), // system | admin:<id>
+  attempts: integer("attempts").notNull().default(0),
   providerRefundId: text("provider_refund_id"),
   error: text("error"),
   createdAt: ts("created_at").notNull().defaultNow(),
@@ -429,10 +431,10 @@ export const deals = pgTable("deals", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
+/** Выплата продавцу с его баланса на реквизиты, указанные при верификации. dealId — если выплата по одной сделке. */
 export const payouts = pgTable("payouts", {
   id: uuid("id").primaryKey().defaultRandom(),
   dealId: uuid("deal_id")
-    .notNull()
     .references(() => deals.id)
     .unique(),
   sellerId: uuid("seller_id")
@@ -442,8 +444,46 @@ export const payouts = pgTable("payouts", {
   status: payoutStatusEnum("status").notNull().default("PENDING"),
   providerPayoutId: text("provider_payout_id"),
   error: text("error"),
+  requestedBy: text("requested_by"), // admin:<id>
   createdAt: ts("created_at").notNull().defaultNow(),
   sentAt: ts("sent_at"),
+});
+
+/**
+ * Баланс продавца P2P = сумма проводок. Пополнить баланс деньгами нельзя (ТЗ, разделы 1 и 6):
+ * плюс дают только заработок по сделке и корректировка администратора с причиной, минус — выплата.
+ */
+export const balanceEntryKindEnum = pgEnum("balance_entry_kind", [
+  "DEAL_EARNING", // цена сделки минус комиссия, после защиты от отката
+  "ADJUSTMENT", // ручная корректировка администратора (+/-), причина обязательна
+  "PAYOUT", // выплата на реквизиты (минус)
+  "PAYOUT_REVERSAL", // выплата не прошла — деньги возвращаются на баланс
+]);
+
+export const balanceEntries = pgTable(
+  "balance_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sellerId: uuid("seller_id")
+      .notNull()
+      .references(() => users.id),
+    kind: balanceEntryKindEnum("kind").notNull(),
+    amountMinor: integer("amount_minor").notNull(), // со знаком
+    dealId: uuid("deal_id").references(() => deals.id),
+    payoutId: uuid("payout_id").references(() => payouts.id),
+    reason: text("reason"),
+    actor: text("actor").notNull(), // system | admin:<id>
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("balance_entries_seller_idx").on(t.sellerId, t.createdAt)],
+);
+
+/** Настройки магазина, которые меняются из админки без деплоя. */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
 // ---------- Аудит ----------

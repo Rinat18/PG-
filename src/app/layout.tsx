@@ -29,6 +29,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <form action="/search" className="ml-auto hidden sm:block">
               <input name="q" placeholder="Поиск товара" className="input w-56 py-1.5" />
             </form>
+            {user && user.role !== "BUYER" && (
+              <Link href="/admin" className="ml-auto text-sm text-muted hover:text-text sm:ml-0">
+                Админка
+              </Link>
+            )}
             <Link href={user ? "/account" : "/login"} className="ml-auto text-sm font-semibold hover:text-accent sm:ml-0">
               {user ? (user.displayName ?? "Кабинет") : "Войти"}
             </Link>

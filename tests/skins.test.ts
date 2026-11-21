@@ -9,7 +9,7 @@ import { getProduct, listProducts } from "@/lib/catalog";
 import { signMockWebhook, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "@/lib/payments/mock-elqr";
 
 beforeEach(async () => {
-  await db.execute(sql`truncate table sessions, login_tokens, rate_limits, users, webhook_events, email_outbox, refunds,
+  await db.execute(sql`truncate table settings, sessions, login_tokens, rate_limits, users, webhook_events, email_outbox, refunds,
     trade_offers, payments, product_keys, order_items, orders, products, mock_provider_payments, audit_log cascade`);
 });
 

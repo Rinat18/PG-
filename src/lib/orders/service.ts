@@ -19,6 +19,7 @@ import { env } from "@/lib/env";
 import { formatKgs } from "@/lib/format";
 import { getPaymentProvider } from "@/lib/payments";
 import type { PaymentWebhookEvent } from "@/lib/payments/types";
+import { getSettings } from "@/lib/settings";
 import { checkSkinBuyer, getSteamApi, SkinBuyerError, type SteamApi } from "@/lib/steam/buyer-checks";
 
 /** Оплата, пришедшая чуть позже таймера (задержка банка), еще принимается. */
@@ -92,6 +93,8 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
     throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
   }
 
+  const cfg = await getSettings();
+
   // Антифрод: не более N заказов с одного email или аккаунта в час (ТЗ, раздел 7)
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const [{ count }] = await db
@@ -103,7 +106,7 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
         gte(orders.createdAt, hourAgo),
       ),
     );
-  if (count >= env.MAX_ORDERS_PER_EMAIL_PER_HOUR) {
+  if (count >= cfg.maxOrdersPerHour) {
     throw new OrderError("RATE_LIMIT", "Слишком много заказов за час. Попробуйте позже или напишите в поддержку");
   }
 
@@ -132,8 +135,8 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
     }
   }
 
-  const expiresAt = new Date(Date.now() + env.ORDER_TTL_MINUTES * 60 * 1000);
-  const needsReview = env.REVIEW_THRESHOLD_MINOR !== undefined && product.priceMinor > env.REVIEW_THRESHOLD_MINOR;
+  const expiresAt = new Date(Date.now() + cfg.orderTtlMinutes * 60 * 1000);
+  const needsReview = cfg.reviewThresholdSom > 0 && product.priceMinor > cfg.reviewThresholdSom * 100;
 
   const order = await db.transaction(async (tx) => {
     const [order] = await tx
@@ -442,8 +445,13 @@ async function fulfillOrder(tx: Tx, orderId: string): Promise<boolean> {
 // ---------- Возвраты ----------
 
 export async function processRefund(refundId: string) {
-  const [refund] = await db.select().from(refunds).where(eq(refunds.id, refundId));
-  if (!refund || refund.status !== "PENDING") return;
+  // Захват возврата условным UPDATE: параллельные вызовы не отправят провайдеру второй возврат
+  const [refund] = await db
+    .update(refunds)
+    .set({ status: "PROCESSING", attempts: sql`${refunds.attempts} + 1`, error: null })
+    .where(and(eq(refunds.id, refundId), eq(refunds.status, "PENDING")))
+    .returning();
+  if (!refund) return;
   const [payment] = await db.select().from(payments).where(eq(payments.id, refund.paymentId));
   const provider = getPaymentProvider(payment.provider);
   try {
