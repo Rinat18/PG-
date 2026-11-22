@@ -313,3 +313,15 @@ describe("очередь трейд-офферов", () => {
     expect(await processTradeQueue({ [bot.id]: new MockBotClient(bot.steamId, 0) })).toMatchObject({ sent: 1 });
   });
 });
+
+describe("mock-бот на демо-стенде", () => {
+  it("состояние оффера читается другим экземпляром (без общей памяти)", async () => {
+    const a = new MockBotClient("76561190000000001", 0);
+    const { offerId } = await a.sendOffer({ tradeUrl: "https://x/?token=ok", appId: 730, assetId: Object.values(cs2Items)[0].assetid });
+    const { offerId: declined } = await a.sendOffer({ tradeUrl: "https://x/?token=decline", appId: 730, assetId: Object.values(cs2Items)[1].assetid });
+    const b = new MockBotClient("76561190000000001", 0);
+    expect(await b.getOfferState(offerId)).toBe("Accepted");
+    expect(await b.getOfferState(declined)).toBe("Declined");
+    expect(await b.getOfferState("unknown")).toBe("Invalid");
+  });
+});

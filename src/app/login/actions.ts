@@ -46,3 +46,15 @@ export async function consumeEmailLoginAction(_prev: ConsumeState, form: FormDat
   }
   redirect(next);
 }
+
+/** Демо-стенд: вход тестовой ролью одной кнопкой (DEMO_MODE=true, только тестовая оплата). */
+export async function demoLoginAction(form: FormData) {
+  const { env } = await import("@/lib/env");
+  const { DEMO_PERSONAS, ensureDemoUser } = await import("@/lib/demo/personas");
+  if (!env.DEMO_MODE) redirect("/login");
+  const key = String(form.get("persona")) as keyof typeof DEMO_PERSONAS;
+  if (!(key in DEMO_PERSONAS)) redirect("/login");
+  const user = await ensureDemoUser(key);
+  await startSession(user.id);
+  redirect(DEMO_PERSONAS[key].role === "BUYER" ? (key === "seller" ? "/sell" : "/") : "/admin");
+}
