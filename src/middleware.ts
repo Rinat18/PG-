@@ -9,7 +9,23 @@ const SESSION_COOKIE_NAME = "pg_session";
 const DEVICE_COOKIE_NAME = "pg_did";
 const PROTECTED = /^\/(account|admin|sell)(\/|$)/;
 
+/** Демо-стенд: пароль на весь сайт (DEMO_PASSWORD). Webhook оплаты и крон сюда не попадают (matcher). */
+function demoAuthOk(req: NextRequest) {
+  const pass = process.env.DEMO_PASSWORD;
+  if (!pass) return true;
+  const h = req.headers.get("authorization") ?? "";
+  if (!h.startsWith("Basic ")) return false;
+  const decoded = atob(h.slice(6));
+  return decoded.slice(decoded.indexOf(":") + 1) === pass;
+}
+
 export function middleware(req: NextRequest) {
+  if (!demoAuthOk(req)) {
+    return new NextResponse("Нужен пароль демо-стенда", {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Basic realm="PlayGround demo", charset="UTF-8"' },
+    });
+  }
   let res: NextResponse;
   if (PROTECTED.test(req.nextUrl.pathname) && !req.cookies.get(SESSION_COOKIE_NAME)?.value) {
     const url = req.nextUrl.clone();

@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth/current";
 import { safeNextPath } from "@/lib/auth/email-login";
 import { env } from "@/lib/env";
 import { EmailLoginForm } from "./EmailLoginForm";
+import { DEMO_PERSONAS } from "@/lib/demo/personas";
+import { demoLoginAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Вход", robots: { index: false } };
@@ -23,6 +25,21 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <h1 className="text-xl font-bold">Вход</h1>
       {sp.error && errors[sp.error] && (
         <div className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{errors[sp.error]}</div>
+      )}
+      {env.DEMO_MODE && (
+        <div className="card space-y-3 border-accent/40 p-6">
+          <div className="text-sm font-semibold">Демо: войти тестовой ролью</div>
+          <p className="text-xs text-muted">Только на демо-стенде. Steam-аккаунты ненастоящие, инвентари тестовые.</p>
+          {Object.entries(DEMO_PERSONAS).map(([key, p]) => (
+            <form key={key} action={demoLoginAction}>
+              <input type="hidden" name="persona" value={key} />
+              <button className="w-full rounded-lg border border-line px-3 py-2 text-left hover:border-accent">
+                <div className="text-sm font-semibold">{p.label}</div>
+                <div className="text-xs text-muted">{p.hint}</div>
+              </button>
+            </form>
+          ))}
+        </div>
       )}
       <div className="card space-y-3 p-6">
         <a href={`/api/auth/steam?next=${encodeURIComponent(next)}`} className="btn-primary w-full">

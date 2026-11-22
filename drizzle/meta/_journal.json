@@ -50,6 +50,13 @@
       "when": 1795360885797,
       "tag": "0006_p2p",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795362413080,
+      "tag": "0007_private_files",
+      "breakpoints": true
     }
   ]
 }

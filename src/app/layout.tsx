@@ -3,6 +3,8 @@ import Link from "next/link";
 import "./globals.css";
 import { navGames, site } from "@/lib/site";
 import { getCurrentUser } from "@/lib/auth/current";
+import { kickDemoTick } from "@/lib/demo/kick";
+import { env } from "@/lib/env";
 
 export const metadata: Metadata = {
   title: { default: `${site.name} — ключи, Prime, Dota Plus и скины`, template: `%s · ${site.name}` },
@@ -11,9 +13,19 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const user = await getCurrentUser();
+  kickDemoTick();
   return (
     <html lang="ru">
       <body className="min-h-screen flex flex-col antialiased">
+        {env.DEMO_MODE && (
+          <div className="bg-accent/15 px-4 py-1.5 text-center text-xs text-accent">
+            Демо-стенд: оплата, Steam, боты и выплаты тестовые, деньги не списываются.{" "}
+            <Link href="/login" className="underline">
+              Тестовые роли
+            </Link>{" "}
+            · <Link href="/dev/mail" className="underline">Тестовая почта</Link>
+          </div>
+        )}
         <header className="sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
             <Link href="/" className="text-lg font-extrabold tracking-tight">

@@ -597,3 +597,10 @@ export const mockProviderPayments = pgTable("mock_provider_payments", {
   expiresAt: ts("expires_at").notNull(),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
+
+/** Зашифрованные файлы для FILE_STORAGE=db (демо-стенд без диска). На боевом — S3. */
+export const privateFiles = pgTable("private_files", {
+  key: text("key").primaryKey(),
+  data: text("data").notNull(), // base64 уже зашифрованного файла
+  createdAt: ts("created_at").notNull().defaultNow(),
+});

@@ -2,6 +2,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { decryptBuffer, encryptBuffer, randomToken } from "@/lib/crypto";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { privateFiles } from "@/db/schema";
 import { env } from "@/lib/env";
 
 /**
@@ -47,13 +50,26 @@ class S3Store implements FileStore {
   }
 }
 
+class DbStore implements FileStore {
+  async put(key: string, data: Buffer) {
+    await db.insert(privateFiles).values({ key, data: data.toString("base64") });
+  }
+  async get(key: string) {
+    const [row] = await db.select().from(privateFiles).where(eq(privateFiles.key, key));
+    if (!row) throw new Error("file not found");
+    return Buffer.from(row.data, "base64");
+  }
+}
+
 let override: FileStore | null = null;
 export function setFileStoreForTests(s: FileStore | null) {
   override = s;
 }
 function store(): FileStore {
   if (override) return override;
-  return env.FILE_STORAGE === "s3" ? new S3Store() : new LocalStore(env.FILE_STORAGE_DIR);
+  if (env.FILE_STORAGE === "s3") return new S3Store();
+  if (env.FILE_STORAGE === "db") return new DbStore();
+  return new LocalStore(env.FILE_STORAGE_DIR);
 }
 
 export const MAX_DOC_BYTES = 8 * 1024 * 1024;

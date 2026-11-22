@@ -28,14 +28,16 @@ export class MockBotClient implements BotClient {
     if (!this.inventory.some((i) => i.assetid === p.assetId) || this.given.has(p.assetId)) {
       throw new BotError("mock: предмета нет в инвентаре бота", true);
     }
-    const offerId = `mock-${randomUUID().slice(0, 8)}`;
+    // состояние зашифровано в id: оффер читается и в другом экземпляре сервера (демо-стенд без воркера)
+    const mode = /token=decline/i.test(p.tradeUrl) ? "d" : /token=hold/i.test(p.tradeUrl) ? "h" : "a";
+    const offerId = `mock-${Date.now()}-${mode}-${randomUUID().slice(0, 8)}`;
     this.offers.set(offerId, { sentAt: Date.now(), tradeUrl: p.tradeUrl });
     if (!/token=decline/i.test(p.tradeUrl)) this.given.add(p.assetId);
     return { offerId };
   }
 
   async getOfferState(offerId: string): Promise<OfferState> {
-    const o = this.offers.get(offerId);
+    const o = this.offers.get(offerId) ?? decodeOffer(offerId);
     if (!o) return "Invalid";
     if (o.state) return o.state;
     if (Date.now() - o.sentAt < this.acceptAfterMs) return "Active";
@@ -48,4 +50,11 @@ export class MockBotClient implements BotClient {
     const o = this.offers.get(offerId);
     if (o) o.state = "Canceled";
   }
+}
+
+function decodeOffer(offerId: string): { sentAt: number; tradeUrl: string; state?: OfferState } | null {
+  const m = /^mock-(\d+)-([adh])-/.exec(offerId);
+  if (!m) return null;
+  const tradeUrl = m[2] === "d" ? "token=decline" : m[2] === "h" ? "token=hold" : "";
+  return { sentAt: Number(m[1]), tradeUrl };
 }
