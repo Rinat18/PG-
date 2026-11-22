@@ -7,11 +7,13 @@ import { checkoutAction, type CheckoutState } from "./actions";
 
 export function CheckoutForm({
   slug,
+  listingId,
   needsTradeUrl,
   defaultEmail,
   defaultTradeUrl,
 }: {
   slug: string;
+  listingId?: string;
   needsTradeUrl: boolean;
   defaultEmail?: string;
   defaultTradeUrl?: string;
@@ -20,6 +22,7 @@ export function CheckoutForm({
   return (
     <form action={action} className="relative space-y-4">
       <input type="hidden" name="slug" value={slug} />
+      {listingId && <input type="hidden" name="listingId" value={listingId} />}
       <Honeypot />
       <label className="block space-y-1.5">
         <span className="text-sm">Email для чека{needsTradeUrl ? "" : " и ключа"}</span>

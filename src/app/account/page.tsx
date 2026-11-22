@@ -42,6 +42,14 @@ export default async function AccountPage() {
         </form>
       </div>
 
+      <Link href="/sell" className="card flex items-center justify-between p-4 text-sm hover:border-accent/60">
+        <span>
+          <span className="font-semibold">Кабинет продавца</span>
+          <span className="text-muted"> — выставить свои скины, сделки, выплаты</span>
+        </span>
+        <span className="text-accent">→</span>
+      </Link>
+
       <section className="space-y-3">
         <h2 className="font-bold">Мои заказы</h2>
         {orders.length === 0 ? (

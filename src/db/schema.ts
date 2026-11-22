@@ -15,7 +15,9 @@ import {
   real,
   uniqueIndex,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ---------- Справочники ----------
 
@@ -172,6 +174,7 @@ export type SkinAttributes = {
   marketHashName: string;
   assetId?: string;
   classId?: string;
+  instanceId?: string;
   exterior?: string; // Factory New, Minimal Wear ...
   rarity?: string;
   float?: number;
@@ -276,6 +279,8 @@ export const orderItems = pgTable("order_items", {
     .references(() => orders.id),
   productId: uuid("product_id").references(() => products.id),
   listingId: uuid("listing_id"), // P2P-лот
+  // P2P: assetid таких же предметов у покупателя до сделки — чтобы отличить полученный от уже имевшихся
+  buyerBaselineAssetIds: jsonb("buyer_baseline_asset_ids").$type<string[]>(),
   titleSnapshot: text("title_snapshot").notNull(),
   typeSnapshot: productTypeEnum("type_snapshot"),
   deliveryMethod: deliveryMethodEnum("delivery_method").notNull(),
@@ -404,6 +409,11 @@ export const sellerProfiles = pgTable("seller_profiles", {
   rating: real("rating"),
   verifiedAt: ts("verified_at"),
   rejectionReason: text("rejection_reason"),
+  // sha256 нормализованных реквизитов: поиск связанных аккаунтов без расшифровки
+  payoutDetailsHash: text("payout_details_hash"),
+  submittedAt: ts("submitted_at"),
+  reviewedBy: text("reviewed_by"),
+  sellerOfferAcceptedAt: ts("seller_offer_accepted_at"), // согласие с офертой для продавцов
 });
 
 export const listings = pgTable(
@@ -415,6 +425,7 @@ export const listings = pgTable(
       .references(() => users.id),
     game: gameEnum("game").notNull(),
     title: text("title").notNull(),
+    assetId: text("asset_id").notNull(), // предмет в инвентаре продавца на момент выставления
     skin: jsonb("skin").$type<SkinAttributes>().notNull(),
     imageUrl: text("image_url"),
     priceMinor: integer("price_minor").notNull(),
@@ -422,9 +433,14 @@ export const listings = pgTable(
     status: listingStatusEnum("status").notNull().default("ACTIVE"),
     reservedByOrderId: uuid("reserved_by_order_id"),
     reservedUntil: ts("reserved_until"),
+    blockedReason: text("blocked_reason"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [index("listings_game_status_idx").on(t.game, t.status)],
+  (t) => [
+    index("listings_game_status_idx").on(t.game, t.status),
+    // один предмет — один живой лот
+    uniqueIndex("listings_live_asset_uq").on(t.game, t.assetId).where(sql`status in ('ACTIVE', 'RESERVED')`),
+  ],
 );
 
 export const deals = pgTable("deals", {
@@ -445,16 +461,55 @@ export const deals = pgTable("deals", {
   transferDeadline: ts("transfer_deadline"), // [__] часов на передачу
   transferredAt: ts("transferred_at"),
   protectionUntil: ts("protection_until"), // trade protection [__] дней
-  reviewReason: text("review_reason"),
+  reviewReason: text("review_reason"), // почему сделка на проверке: связанные аккаунты, цена
+  disputeReason: text("dispute_reason"),
+  statusBeforeDispute: dealStatusEnum("status_before_dispute"),
+  cancelReason: text("cancel_reason"),
+  receivedAssetId: text("received_asset_id"), // assetid предмета у покупателя после передачи
+  earningCreditedAt: ts("earning_credited_at"), // заработок зачислен на баланс продавца
+  payoutError: text("payout_error"), // почему автоматическая выплата не ушла (нет верификации, лимит)
+  reminderSentAt: ts("reminder_sent_at"),
+  lastCheckAt: ts("last_check_at"),
+  lastCheckError: text("last_check_error"),
   createdAt: ts("created_at").notNull().defaultNow(),
-});
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("deals_order_uq").on(t.orderId), index("deals_status_idx").on(t.status)]);
+
+/**
+ * Следы аккаунта для запрета сделок между связанными аккаунтами (ТЗ, 5.1): IP и устройство.
+ * Хранятся хеши, а не сами значения.
+ */
+export const userFingerprints = pgTable(
+  "user_fingerprints",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // ip | device
+    valueHash: text("value_hash").notNull(),
+    firstSeenAt: ts("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.kind, t.valueHash] }), index("user_fingerprints_value_idx").on(t.kind, t.valueHash)],
+);
+
+/** Рыночная цена предмета (кеш), для проверки отклонения цены лота. */
+export const marketPrices = pgTable(
+  "market_prices",
+  {
+    game: gameEnum("game").notNull(),
+    marketHashName: text("market_hash_name").notNull(),
+    priceMinor: integer("price_minor"), // null — цены нет на рынке
+    source: text("source").notNull(),
+    fetchedAt: ts("fetched_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.game, t.marketHashName] })],
+);
 
 /** Выплата продавцу с его баланса на реквизиты, указанные при верификации. dealId — если выплата по одной сделке. */
 export const payouts = pgTable("payouts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  dealId: uuid("deal_id")
-    .references(() => deals.id)
-    .unique(),
+  dealId: uuid("deal_id").references(() => deals.id), // одна активная выплата на сделку (индекс ниже); после сбоя — повтор
   sellerId: uuid("seller_id")
     .notNull()
     .references(() => users.id),
@@ -465,7 +520,7 @@ export const payouts = pgTable("payouts", {
   requestedBy: text("requested_by"), // admin:<id>
   createdAt: ts("created_at").notNull().defaultNow(),
   sentAt: ts("sent_at"),
-});
+}, (t) => [uniqueIndex("payouts_live_deal_uq").on(t.dealId).where(sql`status in ('PENDING', 'SENT') and deal_id is not null`)]);
 
 /**
  * Баланс продавца P2P = сумма проводок. Пополнить баланс деньгами нельзя (ТЗ, разделы 1 и 6):
@@ -516,7 +571,23 @@ export const auditLog = pgTable("audit_log", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
-// ---------- Только для разработки: «банк» mock-провайдера ELQR ----------
+// ---------- Только для разработки ----------
+
+/** Инвентари Steam в mock-режиме (STEAM_CHECKS=mock): продавец «передает» скин кнопкой на странице сделки. */
+export const mockSteamItems = pgTable(
+  "mock_steam_items",
+  {
+    assetId: text("asset_id").primaryKey(),
+    steamId: text("steam_id").notNull(),
+    appId: integer("app_id").notNull(),
+    item: jsonb("item").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("mock_steam_items_owner_idx").on(t.steamId, t.appId)],
+);
+export const mockSteamSeeded = pgTable("mock_steam_seeded", { key: text("key").primaryKey() });
+
+// «банк» mock-провайдера ELQR
 
 export const mockProviderPayments = pgTable("mock_provider_payments", {
   id: text("id").primaryKey(),

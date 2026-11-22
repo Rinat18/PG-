@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createOrder, OrderError } from "@/lib/orders/service";
-import { getClientIp, getCurrentUser } from "@/lib/auth/current";
+import { getClientIp, getCurrentUser, getDeviceId } from "@/lib/auth/current";
 import { allowFormByIp, isHoneypotTripped } from "@/lib/security/rate-limit";
 
 export type CheckoutState = { error?: string; values?: { email: string; tradeUrl?: string } };
@@ -21,13 +21,14 @@ export async function checkoutAction(_prev: CheckoutState, form: FormData): Prom
   try {
     const order = await createOrder(
       {
-        productSlug: String(form.get("slug") ?? ""),
+        productSlug: form.get("listingId") ? undefined : String(form.get("slug") ?? ""),
+        listingId: form.get("listingId") ? String(form.get("listingId")) : undefined,
         email,
         tradeUrl,
         adultConfirmed: form.get("adult") === "on",
         offerAccepted: form.get("offer") === "on",
       },
-      { ip, userId: user?.id },
+      { ip, userId: user?.id, deviceId: await getDeviceId() },
     );
     token = order.accessToken;
   } catch (e) {

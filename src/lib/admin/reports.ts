@@ -76,6 +76,48 @@ export async function exportOrdersCsv(actor: SessionUser | null, p: Period) {
   ]);
 }
 
+/** История сделок P2P за период — по запросу провайдера (ТЗ 5.1). */
+export async function exportDealsCsv(actor: SessionUser | null, p: Period) {
+  assertCan(actor, "deals.manage");
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    select d.id, o.number, to_char(d.created_at at time zone 'Asia/Bishkek', 'YYYY-MM-DD HH24:MI') as created, d.status,
+      l.title, l.game, d.price_minor, d.commission_minor, l.market_price_minor,
+      s.steam_id as seller_steam, b.steam_id as buyer_steam,
+      to_char(d.transferred_at at time zone 'Asia/Bishkek', 'YYYY-MM-DD HH24:MI') as transferred,
+      d.review_reason, d.dispute_reason, d.cancel_reason,
+      (select string_agg(py.status::text || ' ' || py.amount_minor, ', ') from payouts py where py.deal_id = d.id) as payouts
+    from deals d join listings l on l.id = d.listing_id join orders o on o.id = d.order_id
+    join users s on s.id = d.seller_id left join users b on b.id = d.buyer_id
+    where d.created_at >= ${p.from} and d.created_at < ${p.to}
+    order by d.created_at`);
+  return toCsv([
+    ["Сделка", "Заказ", "Создана", "Статус", "Предмет", "Игра", "Цена, сом", "Комиссия, сом", "Рыночная, сом", "Продавец SteamID", "Покупатель SteamID", "Передан", "Проверка", "Спор", "Отмена", "Выплаты"],
+    ...rows.rows.map((r) => [
+      r.id, r.number, r.created, r.status, r.title, r.game,
+      (Number(r.price_minor) / 100).toFixed(2), (Number(r.commission_minor) / 100).toFixed(2),
+      r.market_price_minor === null ? "" : (Number(r.market_price_minor) / 100).toFixed(2),
+      r.seller_steam, r.buyer_steam, r.transferred, r.review_reason, r.dispute_reason, r.cancel_reason, r.payouts,
+    ]),
+  ]);
+}
+
+/** Реестр выплат продавцам за период (реквизиты — только маской). */
+export async function exportPayoutsCsv(actor: SessionUser | null, p: Period) {
+  assertCan(actor, "deals.manage");
+  const rows = await db.execute<Record<string, unknown>>(sql`
+    select py.id, to_char(py.created_at at time zone 'Asia/Bishkek', 'YYYY-MM-DD HH24:MI') as created, py.status, py.amount_minor,
+      u.steam_id, u.display_name, py.deal_id, py.provider_payout_id, py.requested_by, py.error
+    from payouts py join users u on u.id = py.seller_id
+    where py.created_at >= ${p.from} and py.created_at < ${p.to}
+    order by py.created_at`);
+  return toCsv([
+    ["Выплата", "Создана", "Статус", "Сумма, сом", "Продавец SteamID", "Продавец", "Сделка", "ID у провайдера", "Инициатор", "Ошибка"],
+    ...rows.rows.map((r) => [
+      r.id, r.created, r.status, (Number(r.amount_minor) / 100).toFixed(2), r.steam_id, r.display_name, r.deal_id, r.provider_payout_id, r.requested_by, r.error,
+    ]),
+  ]);
+}
+
 export async function dashboardStats(actor: SessionUser | null) {
   assertCan(actor, "dashboard.view");
   const [r] = (
@@ -95,7 +137,9 @@ export async function dashboardStats(actor: SessionUser | null) {
         (select coalesce(sum(amount_minor), 0) from balance_entries)::int as sellers_balance,
         (select count(*) from seller_profiles where verification_status = 'PENDING')::int as verification_queue,
         (select count(*) from bot_accounts where is_active and (status <> 'ONLINE' or last_heartbeat_at < now() - interval '5 minutes'))::int as bots_down,
-        (select count(*) from trade_offers where status = 'QUEUED')::int as trades_queued
+        (select count(*) from trade_offers where status = 'QUEUED')::int as trades_queued,
+        (select count(*) from deals where status = 'REVIEW')::int as deals_review,
+        (select count(*) from deals where status = 'DISPUTE')::int as deals_dispute
     `)
   ).rows;
   return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, Number(v)])) as Record<string, number>;

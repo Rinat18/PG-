@@ -35,3 +35,17 @@ export function sha256(value: string): string {
 export function randomToken(bytes = 24): string {
   return randomBytes(bytes).toString("base64url");
 }
+
+/** Шифрование файлов (фото паспорта и селфи): 12 байт IV + 16 байт тег + шифротекст. */
+export function encryptBuffer(plain: Buffer): Buffer {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
+  const ct = Buffer.concat([cipher.update(plain), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ct]);
+}
+
+export function decryptBuffer(payload: Buffer): Buffer {
+  const decipher = createDecipheriv("aes-256-gcm", getKey(), payload.subarray(0, 12));
+  decipher.setAuthTag(payload.subarray(12, 28));
+  return Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]);
+}

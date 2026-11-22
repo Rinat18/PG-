@@ -20,6 +20,7 @@ export const settingsSchema = z.object({
   p2pCommissionPercent: z.coerce.number().min(0).max(50),
   p2pTransferHours: z.coerce.number().int().min(1).max(168),
   p2pProtectionDays: z.coerce.number().int().min(0).max(30),
+  p2pMaxPriceDeviationPercent: z.coerce.number().int().min(1).max(500),
   sellerDailyPayoutLimitSom: z.coerce.number().int().min(0), // 0 — без лимита
   sellerMonthlyPayoutLimitSom: z.coerce.number().int().min(0),
 });
@@ -37,6 +38,7 @@ export const settingsDefaults: Settings = {
   p2pCommissionPercent: 10,
   p2pTransferHours: 12,
   p2pProtectionDays: 7,
+  p2pMaxPriceDeviationPercent: 30,
   sellerDailyPayoutLimitSom: 0,
   sellerMonthlyPayoutLimitSom: 0,
 };
@@ -53,6 +55,7 @@ export const settingsLabels: Record<keyof Settings, string> = {
   p2pCommissionPercent: "Комиссия P2P, %",
   p2pTransferHours: "Срок передачи скина продавцом, часов",
   p2pProtectionDays: "Защита от отката (trade protection), дней",
+  p2pMaxPriceDeviationPercent: "Допустимое отклонение цены лота от рыночной, % (больше — сделка на проверку)",
   sellerDailyPayoutLimitSom: "Лимит выплат продавцу в сутки, сом (0 — нет)",
   sellerMonthlyPayoutLimitSom: "Лимит выплат продавцу в месяц, сом (0 — нет)",
 };

@@ -94,7 +94,7 @@ async function verifiedSeller(details = "KG12 3456 7890 Ivanov Ivan") {
     encryptedBirthDate: encrypt("1990-01-01"),
     encryptedPassport: encrypt("ID1234567"),
     encryptedPayoutDetails: encrypt(details),
-    phone: "+996700000000",
+    phone: encrypt("+996700000000"), // телефон тоже шифруется
   });
   return u;
 }

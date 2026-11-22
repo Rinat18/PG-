@@ -26,6 +26,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 </Link>
               ))}
             </nav>
+            <Link href="/sell" className="hidden text-sm text-muted hover:text-text sm:block">
+              Продать скин
+            </Link>
             <form action="/search" className="ml-auto hidden sm:block">
               <input name="q" placeholder="Поиск товара" className="input w-56 py-1.5" />
             </form>
@@ -56,6 +59,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               <Link href="/info/payment" className="hover:text-text">Оплата и выдача</Link>
               <Link href="/info/refund" className="hover:text-text">Возврат</Link>
               <Link href="/info/contacts" className="hover:text-text">Контакты и реквизиты</Link>
+              <Link href="/info/seller-rules" className="hover:text-text">Правила для продавцов</Link>
+              <Link href="/info/privacy" className="hover:text-text">Политика конфиденциальности</Link>
             </div>
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 rounded-md border border-line px-2 py-1 font-semibold text-text">

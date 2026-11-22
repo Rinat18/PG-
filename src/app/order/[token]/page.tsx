@@ -4,7 +4,9 @@ import QRCode from "qrcode";
 import { getOrderForBuyer } from "@/lib/orders/service";
 import { formatKgs, orderStatusLabel } from "@/lib/format";
 import { PaymentWaiter } from "./PaymentWaiter";
-import { cancelOrderAction } from "./actions";
+import { cancelOrderAction, openDisputeAction } from "./actions";
+import { dealStage, getDealForOrder } from "@/lib/p2p/deals";
+import { Flash, fmtDate } from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Заказ", robots: { index: false } };
@@ -19,12 +21,20 @@ const statusTone: Record<string, string> = {
   CANCELLED: "text-muted",
 };
 
-export default async function OrderPage({ params }: { params: Promise<{ token: string }> }) {
+export default async function OrderPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>;
+  searchParams: Promise<{ ok?: string; error?: string }>;
+}) {
   const { token } = await params;
+  const sp = await searchParams;
   const view = await getOrderForBuyer(token);
   if (!view) notFound();
   const { order, payment, items, keys } = view;
   const isSkinOrder = items.some((i) => i.deliveryMethod === "TRADE_OFFER");
+  const p2p = items.some((i) => i.listingId) ? await getDealForOrder(order.id) : null;
 
   const qrDataUrl =
     order.status === "PENDING_PAYMENT" && payment
@@ -37,6 +47,7 @@ export default async function OrderPage({ params }: { params: Promise<{ token: s
         <h1 className="text-xl font-bold">Заказ {order.number}</h1>
         <span className={`text-sm font-semibold ${statusTone[order.status]}`}>{orderStatusLabel[order.status]}</span>
       </div>
+      <Flash ok={sp.ok} error={sp.error} />
 
       <div className="card divide-y divide-line text-sm">
         {items.map((i) => (
@@ -115,7 +126,35 @@ export default async function OrderPage({ params }: { params: Promise<{ token: s
         </div>
       )}
 
-      {order.status === "PAID" && keys.length === 0 && (
+      {p2p && (
+        <div className="card space-y-3 p-4 text-sm">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="font-semibold">Сделка с продавцом {p2p.sellerName ?? ""}</div>
+            <span className="text-accent">{dealStage(p2p.deal)}</span>
+          </div>
+          {p2p.deal.status === "AWAITING_TRANSFER" && (
+            <p className="text-muted">
+              Продавец передаст скин трейд-оффером до {fmtDate(p2p.deal.transferDeadline)}. Примите обмен в Steam, если в нем только
+              «{p2p.listing.title}» и с вас ничего не просят. Сайт сам проверит получение. Не передаст вовремя — деньги вернутся полностью.
+            </p>
+          )}
+          {p2p.deal.status === "REVIEW" && <p className="text-muted">Сделка на стандартной проверке. Мы напишем, если понадобится что-то от вас.</p>}
+          {p2p.deal.status === "DISPUTE" && <p className="text-muted">Спор открыт, его рассматривает поддержка.</p>}
+          {["PROTECTION", "PAID_OUT"].includes(p2p.deal.status) && <p className="text-ok">Скин получен {fmtDate(p2p.deal.transferredAt)}.</p>}
+          {["AWAITING_TRANSFER", "PROTECTION"].includes(p2p.deal.status) && !p2p.deal.earningCreditedAt && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted hover:text-text">Проблема с продавцом или скином?</summary>
+              <form action={openDisputeAction} className="mt-2 space-y-2">
+                <input type="hidden" name="token" value={token} />
+                <textarea name="reason" required minLength={10} rows={3} className="input" placeholder="Что случилось: скин не тот, продавец просит доплату…" />
+                <button className="btn-ghost">Открыть спор</button>
+              </form>
+            </details>
+          )}
+        </div>
+      )}
+
+      {order.status === "PAID" && keys.length === 0 && !p2p && (
         <Notice tone="ok">
           {isSkinOrder
             ? "Оплата получена. Бот магазина отправит трейд-оффер на вашу trade-ссылку; примите его в Steam. Статус обновится здесь и придет на почту."

@@ -14,6 +14,8 @@ import { formatKgs } from "@/lib/format";
 import { kickOutbox } from "@/lib/email/kick";
 import { requeueEmail } from "@/lib/email/outbox";
 import { assertCan } from "@/lib/admin/rbac";
+import { reviewVerification, SellerError } from "@/lib/p2p/seller";
+import { approveDealReview, blockListing, rejectDealReview, resolveDispute } from "@/lib/p2p/deals";
 
 /**
  * Все действия админки. Право проверяется внутри сервисов src/lib/admin/* по текущему пользователю,
@@ -25,7 +27,7 @@ async function run(back: string, fn: () => Promise<string>): Promise<never> {
   try {
     msg = await fn();
   } catch (e) {
-    if (e instanceof AdminActionError || e instanceof AdminAccessError) {
+    if (e instanceof AdminActionError || e instanceof AdminAccessError || e instanceof SellerError) {
       msg = e.message;
       ok = false;
     } else throw e;
@@ -213,5 +215,45 @@ export async function setSkinPricesAction(f: FormData) {
     if (!rows.length) throw new AdminActionError("Укажите хотя бы одну цену");
     const n = await setSkinPrices(await getCurrentUser(), rows);
     return `Цены установлены: ${n}`;
+  });
+}
+
+// ---------- P2P ----------
+
+export async function reviewVerificationAction(f: FormData) {
+  const userId = str(f, "userId");
+  const approve = str(f, "decision") === "approve";
+  await run(`/admin/verification/${userId}`, async () => {
+    await reviewVerification(await getCurrentUser(), userId, approve, str(f, "reason"));
+    return approve ? "Продавец верифицирован" : "Заявка отклонена";
+  });
+}
+
+export async function dealReviewAction(f: FormData) {
+  const id = str(f, "dealId");
+  await run(`/admin/deals/${id}`, async () => {
+    const actor = await getCurrentUser();
+    if (str(f, "decision") === "approve") {
+      await approveDealReview(actor, id);
+      return "Проверка пройдена: продавцу открыт срок передачи";
+    }
+    await rejectDealReview(actor, id, str(f, "reason"));
+    return "Сделка отменена, покупателю оформлен возврат";
+  });
+}
+
+export async function resolveDisputeAction(f: FormData) {
+  const id = str(f, "dealId");
+  const outcome = str(f, "outcome") === "buyer" ? "buyer" : "seller";
+  await run(`/admin/deals/${id}`, async () => {
+    await resolveDispute(await getCurrentUser(), id, outcome, str(f, "note"));
+    return outcome === "buyer" ? "Спор решен в пользу покупателя: возврат" : "Спор решен в пользу продавца: сделка продолжается";
+  });
+}
+
+export async function blockListingAction(f: FormData) {
+  await run("/admin/deals?tab=lots", async () => {
+    await blockListing(await getCurrentUser(), str(f, "listingId"), str(f, "reason"));
+    return "Лот заблокирован";
   });
 }
