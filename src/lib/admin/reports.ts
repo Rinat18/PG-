@@ -93,7 +93,9 @@ export async function dashboardStats(actor: SessionUser | null) {
         (select count(*) from refunds where status = 'FAILED')::int as failed_refunds,
         (select count(*) from orders where status = 'PROBLEM')::int as problems,
         (select coalesce(sum(amount_minor), 0) from balance_entries)::int as sellers_balance,
-        (select count(*) from seller_profiles where verification_status = 'PENDING')::int as verification_queue
+        (select count(*) from seller_profiles where verification_status = 'PENDING')::int as verification_queue,
+        (select count(*) from bot_accounts where is_active and (status <> 'ONLINE' or last_heartbeat_at < now() - interval '5 minutes'))::int as bots_down,
+        (select count(*) from trade_offers where status = 'QUEUED')::int as trades_queued
     `)
   ).rows;
   return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, Number(v)])) as Record<string, number>;

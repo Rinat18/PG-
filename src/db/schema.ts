@@ -84,6 +84,7 @@ export const tradeOfferStatusEnum = pgEnum("trade_offer_status", [
   "DECLINED",
   "FAILED",
   "ROLLED_BACK",
+  "IN_ESCROW", // принят покупателем, но Steam держит обмен (trade hold)
 ]);
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
@@ -157,6 +158,9 @@ export const botAccounts = pgTable("bot_accounts", {
   steamId: text("steam_id").notNull().unique(),
   game: gameEnum("game"),
   isActive: boolean("is_active").notNull().default(true),
+  status: text("status").notNull().default("OFFLINE"), // ONLINE | OFFLINE | ERROR — пишет воркер
+  lastHeartbeatAt: ts("last_heartbeat_at"),
+  inventoryCount: integer("inventory_count"),
   lastSyncAt: ts("last_sync_at"),
   lastError: text("last_error"),
 });
@@ -337,7 +341,7 @@ export const refunds = pgTable("refunds", {
   doneAt: ts("done_at"),
 });
 
-/** Очередь трейд-офферов для воркера ботов (этап 3). */
+/** Очередь трейд-офферов для воркера ботов (worker/, src/lib/bots/trades.ts). */
 export const tradeOffers = pgTable("trade_offers", {
   id: uuid("id").primaryKey().defaultRandom(),
   orderItemId: uuid("order_item_id")
@@ -349,6 +353,9 @@ export const tradeOffers = pgTable("trade_offers", {
   status: tradeOfferStatusEnum("status").notNull().default("QUEUED"),
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
+  nextAttemptAt: ts("next_attempt_at"),
+  sentAt: ts("sent_at"),
+  finishedAt: ts("finished_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });

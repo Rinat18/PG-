@@ -11,6 +11,7 @@ const nav: { href: string; label: string; perm: Permission }[] = [
   { href: "/admin/orders", label: "Заказы", perm: "orders.view" },
   { href: "/admin/refunds", label: "Возвраты", perm: "refunds.manage" },
   { href: "/admin/products", label: "Товары и ключи", perm: "products.manage" },
+  { href: "/admin/bots", label: "Боты и трейды", perm: "bots.view" },
   { href: "/admin/clients", label: "Клиенты", perm: "clients.view" },
   { href: "/admin/balances", label: "Балансы и выплаты", perm: "balances.view" },
   { href: "/admin/emails", label: "Письма", perm: "emails.view" },

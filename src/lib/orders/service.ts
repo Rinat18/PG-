@@ -87,7 +87,7 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
     .select()
     .from(products)
     .where(and(eq(products.slug, data.productSlug), eq(products.isActive, true)));
-  if (!product) throw new OrderError("NOT_FOUND", "Товар не найден или снят с продажи");
+  if (!product || product.priceMinor <= 0) throw new OrderError("NOT_FOUND", "Товар не найден или снят с продажи");
   if (product.type === "SHOP_SKIN" && !ctx.userId) {
     throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
   }

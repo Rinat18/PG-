@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current";
 import { AdminAccessError } from "@/lib/admin/rbac";
-import { AdminActionError, markOrderDelivered, refundOrder, retryRefund } from "@/lib/admin/orders";
-import { disableKey, importKeysCsv, saveProduct, setProductActive, type ProductInput } from "@/lib/admin/catalog";
+import { AdminActionError, markOrderDelivered, refundOrder, requeueTradeOffer, retryRefund } from "@/lib/admin/orders";
+import { disableKey, importKeysCsv, saveProduct, setProductActive, setSkinPrices, type ProductInput } from "@/lib/admin/catalog";
 import { adjustBalance, createPayout } from "@/lib/admin/balances";
 import { setUserBlocked, setUserRole } from "@/lib/admin/clients";
 import { saveSettings } from "@/lib/admin/settings";
@@ -192,5 +192,26 @@ export async function requeueEmailAction(f: FormData) {
     assertCan(await getCurrentUser(), "emails.view");
     if (!(await requeueEmail(str(f, "emailId")))) throw new AdminActionError("Письмо уже отправлено");
     return "Письмо поставлено в очередь повторно";
+  });
+}
+
+// ---------- Боты ----------
+
+export async function requeueTradeAction(f: FormData) {
+  await run(str(f, "back") || "/admin/bots", async () => {
+    await requeueTradeOffer(await getCurrentUser(), str(f, "offerId"));
+    return "Трейд снова в очереди";
+  });
+}
+
+export async function setSkinPricesAction(f: FormData) {
+  await run("/admin/bots", async () => {
+    const ids = f.getAll("id").map(String);
+    const rows = ids
+      .map((id) => ({ id, priceMinor: parseSom(f.get(`price_${id}`)), show: f.get(`show_${id}`) === "on" }))
+      .filter((r) => Number.isFinite(r.priceMinor) && r.priceMinor > 0);
+    if (!rows.length) throw new AdminActionError("Укажите хотя бы одну цену");
+    const n = await setSkinPrices(await getCurrentUser(), rows);
+    return `Цены установлены: ${n}`;
   });
 }
