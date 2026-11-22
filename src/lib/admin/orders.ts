@@ -5,6 +5,7 @@ import type { SessionUser } from "@/lib/auth/session";
 import { queueEmail } from "@/lib/email/outbox";
 import { env } from "@/lib/env";
 import { processRefund } from "@/lib/orders/service";
+import { cancelDealForRefundedOrder } from "@/lib/p2p/deals";
 import { writeAudit } from "@/lib/audit";
 import { actorOf, assertCan } from "./rbac";
 
@@ -155,6 +156,8 @@ export async function refundOrder(actor: SessionUser | null, orderId: string, re
       }
     }
 
+    // P2P: сделка отменяется, продавцу ничего не начисляется (если уже начислено — возврат запрещен выше по цепочке)
+    await cancelDealForRefundedOrder(tx, o.id, actorOf(actor));
     await writeAudit(actorOf(actor), "order.refund_requested", "order", o.id, { reason: why, refundId: refund.id }, tx);
     return { refundId: refund.id, created: true };
   });

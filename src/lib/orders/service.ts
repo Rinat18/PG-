@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, type Tx } from "@/db";
 import {
   auditLog,
+  listings,
   orderItems,
   users,
   orders,
@@ -20,6 +21,10 @@ import type { PaymentWebhookEvent } from "@/lib/payments/types";
 import { getSettings } from "@/lib/settings";
 import { queueEmail } from "@/lib/email/outbox";
 import { checkSkinBuyer, getSteamApi, SkinBuyerError, type SteamApi } from "@/lib/steam/buyer-checks";
+import { APP_ID } from "@/lib/bots/inventory";
+import { createDealForItem, notifyDealStarted } from "@/lib/p2p/deals";
+import { recordFingerprint } from "@/lib/p2p/fingerprints";
+import { getInventoryApi, type InventoryApi } from "@/lib/p2p/inventory";
 
 /** Оплата, пришедшая чуть позже таймера (задержка банка), еще принимается. */
 const LATE_PAYMENT_GRACE_MS = 2 * 60 * 1000;
@@ -36,7 +41,8 @@ export class OrderError extends Error {
       | "INVENTORY_PRIVATE"
       | "TRADE_BAN"
       | "STEAM_UNAVAILABLE"
-      | "PAYMENT_PROVIDER",
+      | "PAYMENT_PROVIDER"
+      | "OWN_LISTING",
     message: string,
   ) {
     super(message);
@@ -48,7 +54,8 @@ export class OrderError extends Error {
 const steamTradeUrl = /^https:\/\/steamcommunity\.com\/tradeoffer\/new\/\?partner=\d+&token=[\w-]{6,}$/;
 
 export const checkoutSchema = z.object({
-  productSlug: z.string().min(1),
+  productSlug: z.string().min(1).optional(),
+  listingId: z.string().uuid().optional(), // P2P-лот вместо товара магазина
   email: z.string().trim().toLowerCase().email("Укажите корректный email"),
   tradeUrl: z
     .string()
@@ -58,7 +65,7 @@ export const checkoutSchema = z.object({
     .or(z.literal("").transform(() => undefined)),
   adultConfirmed: z.boolean().refine((v) => v, "Подтвердите, что вам есть 18 лет"),
   offerAccepted: z.boolean().refine((v) => v, "Нужно согласие с офертой и правилами возврата"),
-});
+}).refine((d) => Boolean(d.productSlug) !== Boolean(d.listingId), "Не выбран товар");
 export type CheckoutInput = z.input<typeof checkoutSchema>;
 
 function newOrderNumber(): string {
@@ -74,7 +81,66 @@ export type CreateOrderContext = {
   userId?: string;
   /** Клиент Steam Web API для проверок покупателя скина; undefined — из env, null — Steam недоступен */
   steamApi?: SteamApi | null;
+  /** метка устройства (cookie pg_did) — для поиска связанных аккаунтов в P2P */
+  deviceId?: string;
+  /** инвентарь Steam (P2P): что уже было у покупателя до сделки */
+  inventory?: InventoryApi;
 };
+
+/** Что покупается: товар магазина или P2P-лот. Для лота — те же поля, что нужны заказу. */
+type Sellable = {
+  kind: "product" | "listing";
+  id: string;
+  title: string;
+  type: (typeof products.$inferSelect)["type"] | null;
+  game: (typeof products.$inferSelect)["game"];
+  deliveryMethod: (typeof products.$inferSelect)["deliveryMethod"];
+  priceMinor: number;
+  isSkin: boolean;
+  unavailable: boolean;
+  marketHashName?: string;
+  sellerId?: string;
+};
+
+async function resolveSellable(data: { productSlug?: string; listingId?: string }): Promise<Sellable | null> {
+  if (data.listingId) {
+    const [l] = await db
+      .select({ listing: listings, sellerBlocked: users.isBlocked })
+      .from(listings)
+      .innerJoin(users, eq(users.id, listings.sellerId))
+      .where(eq(listings.id, data.listingId));
+    if (!l || l.sellerBlocked || l.listing.status === "WITHDRAWN" || l.listing.status === "BLOCKED") return null;
+    return {
+      kind: "listing",
+      id: l.listing.id,
+      title: l.listing.title,
+      type: null,
+      game: l.listing.game,
+      deliveryMethod: "TRADE_OFFER",
+      priceMinor: l.listing.priceMinor,
+      isSkin: true,
+      unavailable: l.listing.status !== "ACTIVE",
+      marketHashName: l.listing.skin.marketHashName,
+      sellerId: l.listing.sellerId,
+    };
+  }
+  const [p] = await db
+    .select()
+    .from(products)
+    .where(and(eq(products.slug, data.productSlug!), eq(products.isActive, true)));
+  if (!p || p.priceMinor <= 0) return null;
+  return {
+    kind: "product",
+    id: p.id,
+    title: p.title,
+    type: p.type,
+    game: p.game,
+    deliveryMethod: p.deliveryMethod,
+    priceMinor: p.priceMinor,
+    isSkin: p.type === "SHOP_SKIN",
+    unavailable: Boolean(p.soldAt || p.reservedByOrderId),
+  };
+}
 
 export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext = {}) {
   const parsed = checkoutSchema.safeParse(input);
@@ -83,12 +149,9 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
 
   await expireStaleOrders();
 
-  const [product] = await db
-    .select()
-    .from(products)
-    .where(and(eq(products.slug, data.productSlug), eq(products.isActive, true)));
-  if (!product || product.priceMinor <= 0) throw new OrderError("NOT_FOUND", "Товар не найден или снят с продажи");
-  if (product.type === "SHOP_SKIN" && !ctx.userId) {
+  const product = await resolveSellable(data);
+  if (!product) throw new OrderError("NOT_FOUND", "Товар не найден или снят с продажи");
+  if (product.isSkin && !ctx.userId) {
     throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
   }
 
@@ -113,12 +176,14 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
   let tradeUrl = data.tradeUrl;
   let tradeHoldDays: number | null = null;
   let buyer: typeof users.$inferSelect | undefined;
-  if (product.type === "SHOP_SKIN") {
+  let baseline: string[] | null = null;
+  if (product.isSkin) {
     [buyer] = await db.select().from(users).where(eq(users.id, ctx.userId!));
     if (!buyer?.steamId || buyer.isBlocked) {
       throw new OrderError("STEAM_LOGIN_REQUIRED", "Скины покупаются только со входом через Steam");
     }
-    if (product.soldAt || product.reservedByOrderId) throw new OrderError("OUT_OF_STOCK", "Скин уже купили или он оплачивается");
+    if (product.sellerId === buyer.id) throw new OrderError("OWN_LISTING", "Нельзя купить собственный лот");
+    if (product.unavailable) throw new OrderError("OUT_OF_STOCK", "Скин уже купили или он оплачивается");
     tradeUrl = tradeUrl ?? buyer.tradeUrl ?? undefined;
     if (!tradeUrl) throw new OrderError("TRADE_URL", "Укажите trade-ссылку Steam: на нее бот отправит скин");
     if (product.game !== "CS2" && product.game !== "DOTA2") throw new OrderError("NOT_FOUND", "Товар не найден");
@@ -131,6 +196,12 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
     } catch (e) {
       if (e instanceof SkinBuyerError) throw new OrderError(e.code, e.message);
       throw e;
+    }
+    if (product.kind === "listing") {
+      // P2P: запоминаем такие же предметы, которые уже есть у покупателя, — чтобы потом найти именно полученный
+      const inv = await (ctx.inventory ?? getInventoryApi()).getInventory(buyer.steamId, APP_ID[product.game as "CS2" | "DOTA2"]);
+      if (!inv) throw new OrderError("STEAM_UNAVAILABLE", "Steam не отдал ваш инвентарь. Проверьте, что он открыт, и повторите через минуту");
+      baseline = inv.filter((i) => i.market_hash_name === product.marketHashName).map((i) => i.assetid);
     }
   }
 
@@ -159,7 +230,9 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
       .insert(orderItems)
       .values({
         orderId: order.id,
-        productId: product.id,
+        productId: product.kind === "product" ? product.id : null,
+        listingId: product.kind === "listing" ? product.id : null,
+        buyerBaselineAssetIds: baseline,
         titleSnapshot: product.title,
         typeSnapshot: product.type,
         deliveryMethod: product.deliveryMethod,
@@ -182,7 +255,15 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
         .where(eq(productKeys.id, key.id));
     }
 
-    if (product.type === "SHOP_SKIN") {
+    if (product.kind === "listing") {
+      // Лот резервируется на время оплаты и пропадает с витрины
+      const reserved = await tx
+        .update(listings)
+        .set({ status: "RESERVED", reservedByOrderId: order.id, reservedUntil: expiresAt })
+        .where(and(eq(listings.id, product.id), eq(listings.status, "ACTIVE")))
+        .returning({ id: listings.id });
+      if (reserved.length === 0) throw new OrderError("OUT_OF_STOCK", "Скин уже купили или он оплачивается");
+    } else if (product.type === "SHOP_SKIN") {
       // Один скин = одна карточка: резерв на время оплаты, из каталога пропадает.
       const reserved = await tx
         .update(products)
@@ -222,7 +303,8 @@ export async function createOrder(input: CheckoutInput, ctx: CreateOrderContext 
     // проверенная ссылка пригодится в следующий раз
     await db.update(users).set({ tradeUrl }).where(eq(users.id, buyer.id));
   }
-  await audit("system", "order.created", "order", order.id, { product: product.slug, needsReview, tradeHoldDays });
+  if (ctx.userId) await recordFingerprint(ctx.userId, { ip: ctx.ip, deviceId: ctx.deviceId }).catch(() => {});
+  await audit("system", "order.created", "order", order.id, { [product.kind]: product.id, needsReview, tradeHoldDays });
   return order;
 }
 
@@ -250,6 +332,10 @@ async function releaseReservations(tx: Tx, orderId: string) {
     .update(products)
     .set({ reservedByOrderId: null, reservedUntil: null })
     .where(and(eq(products.reservedByOrderId, orderId), sql`${products.soldAt} is null`));
+  await tx
+    .update(listings)
+    .set({ status: "ACTIVE", reservedByOrderId: null, reservedUntil: null })
+    .where(and(eq(listings.reservedByOrderId, orderId), eq(listings.status, "RESERVED")));
 }
 
 async function cancelOrder(tx: Tx, orderId: string, reason: string) {
@@ -334,10 +420,11 @@ export async function handlePaymentWebhook(providerName: string, rawBody: string
   if (outcome.refundId) await processRefund(outcome.refundId);
   if (outcome.deliveredOrderId) await queueReceiptEmail(outcome.deliveredOrderId);
   if (outcome.problemOrderId) await notifyDeliveryProblem(outcome.problemOrderId);
+  for (const dealId of outcome.dealIds ?? []) await notifyDealStarted(dealId);
   return { httpStatus: 200, result: outcome.result };
 }
 
-type ApplyOutcome = { result: string; refundId?: string; deliveredOrderId?: string; problemOrderId?: string };
+type ApplyOutcome = { result: string; refundId?: string; deliveredOrderId?: string; problemOrderId?: string; dealIds?: string[] };
 
 async function applyPaymentEvent(providerName: string, event: PaymentWebhookEvent): Promise<ApplyOutcome> {
   return db.transaction(async (tx) => {
@@ -389,23 +476,25 @@ async function applyPaymentEvent(providerName: string, event: PaymentWebhookEven
     if (!switched.length) return { result: "already_processed" };
 
     await tx.update(orders).set({ status: "PAID", paidAt: event.occurredAt }).where(eq(orders.id, order.id));
-    const delivered = await fulfillOrder(tx, order.id);
+    const { delivered, dealIds } = await fulfillOrder(tx, order.id);
     await auditTx(tx, "system", "order.paid", "order", order.id, { delivered });
     const [after] = await tx.select({ status: orders.status }).from(orders).where(eq(orders.id, order.id));
     return {
       result: delivered ? "paid_delivered" : "paid_awaiting_delivery",
       deliveredOrderId: order.id,
       problemOrderId: after.status === "PROBLEM" ? order.id : undefined,
+      dealIds,
     };
   });
 }
 
-/** Выдача после оплаты. Возвращает true, если все позиции выданы сразу. */
-async function fulfillOrder(tx: Tx, orderId: string): Promise<boolean> {
+/** Выдача после оплаты. delivered — все позиции выданы сразу; dealIds — созданные P2P-сделки. */
+async function fulfillOrder(tx: Tx, orderId: string): Promise<{ delivered: boolean; dealIds: string[] }> {
   const [order] = await tx.select().from(orders).where(eq(orders.id, orderId));
   const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
   let allDelivered = true;
   let problem: string | null = null;
+  const dealIds: string[] = [];
 
   for (const item of items) {
     switch (item.deliveryMethod) {
@@ -421,6 +510,14 @@ async function fulfillOrder(tx: Tx, orderId: string): Promise<boolean> {
       case "TRADE_OFFER": {
         if (!order.tradeUrl) {
           problem = "trade_url_missing";
+          break;
+        }
+        allDelivered = false;
+        if (item.listingId) {
+          // P2P: скин передает продавец, сайт проверяет получение (src/lib/p2p/deals.ts)
+          const r = await createDealForItem(tx, order, item);
+          if ("problem" in r) problem = r.problem;
+          else dealIds.push(r.dealId);
           break;
         }
         await tx.insert(tradeOffers).values({ orderItemId: item.id, tradeUrl: order.tradeUrl });
@@ -439,12 +536,12 @@ async function fulfillOrder(tx: Tx, orderId: string): Promise<boolean> {
 
   if (problem) {
     await tx.update(orders).set({ status: "PROBLEM", needsReview: true, problemReason: problem }).where(eq(orders.id, orderId));
-    return false;
+    return { delivered: false, dealIds };
   }
   if (allDelivered) {
     await tx.update(orders).set({ status: "DELIVERED", deliveredAt: new Date() }).where(eq(orders.id, orderId));
   }
-  return allDelivered;
+  return { delivered: allDelivered, dealIds };
 }
 
 // ---------- Возвраты ----------
@@ -544,7 +641,9 @@ async function queueReceiptEmail(orderId: string) {
   const pendingNote =
     order.status === "DELIVERED"
       ? undefined
-      : methods.has("TRADE_OFFER")
+      : view.items.some((i) => i.listingId)
+        ? "Продавец передаст скин трейд-оффером на вашу trade-ссылку, мы проверим получение через Steam. Если он не передаст вовремя, деньги вернутся полностью."
+        : methods.has("TRADE_OFFER")
         ? "Бот магазина отправит трейд-оффер на вашу trade-ссылку. Мы напишем, когда он уйдет."
         : "Товар выдаст оператор. Мы напишем, когда заказ будет выдан.";
   await queueEmail(order.email, "orderPaid", {

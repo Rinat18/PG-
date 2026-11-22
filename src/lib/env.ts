@@ -29,6 +29,17 @@ const schema = z.object({
     .transform((v) => v === "true"), // true — порт 465 (TLS сразу), false — STARTTLS
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
+  // Приватное хранилище фото паспорта и селфи продавцов. Файлы шифруются до загрузки.
+  // local — папка FILE_STORAGE_DIR (только разработка), s3 — любое S3-совместимое хранилище с закрытым бакетом
+  FILE_STORAGE: z.enum(["local", "s3"]).default("local"),
+  FILE_STORAGE_DIR: z.string().default(".data/private"),
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_REGION: z.string().default("us-east-1"),
+  S3_BUCKET: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  // Курс для перевода рыночной цены Steam (USD) в сомы при проверке цены лота
+  USD_KGS_RATE: z.coerce.number().positive().default(87.5),
 });
 
 export const env = schema
@@ -39,4 +50,10 @@ export const env = schema
     message: "EMAIL_TRANSPORT=dev допустим только с PAYMENT_PROVIDER=mock",
   })
   .refine((e) => e.EMAIL_TRANSPORT !== "smtp" || Boolean(e.SMTP_HOST), { message: "Для EMAIL_TRANSPORT=smtp нужен SMTP_HOST" })
+  .refine((e) => e.FILE_STORAGE === "s3" || e.PAYMENT_PROVIDER === "mock", {
+    message: "FILE_STORAGE=local допустим только с PAYMENT_PROVIDER=mock: паспорта продавцов — в приватном S3",
+  })
+  .refine((e) => e.FILE_STORAGE !== "s3" || Boolean(e.S3_BUCKET && e.S3_ACCESS_KEY_ID && e.S3_SECRET_ACCESS_KEY), {
+    message: "Для FILE_STORAGE=s3 нужны S3_BUCKET, S3_ACCESS_KEY_ID и S3_SECRET_ACCESS_KEY",
+  })
   .parse(process.env);

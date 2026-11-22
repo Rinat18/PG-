@@ -2,6 +2,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { getUserBySessionCookie, SESSION_COOKIE, sessionMaxAgeSeconds, createSession, deleteSessionByCookie } from "./session";
+import { DEVICE_COOKIE, recordFingerprint } from "@/lib/p2p/fingerprints";
 
 /** Обертки над сессией для Server Components, server actions и route handlers. */
 
@@ -22,6 +23,15 @@ export async function getClientIp(): Promise<string | undefined> {
   return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || undefined;
 }
 
+export async function getDeviceId(): Promise<string | undefined> {
+  return (await cookies()).get(DEVICE_COOKIE)?.value;
+}
+
+/** IP и устройство текущего запроса — для поиска связанных аккаунтов в P2P. */
+export async function getFingerprint() {
+  return { ip: await getClientIp(), deviceId: await getDeviceId() };
+}
+
 export const sessionCookieOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -37,6 +47,7 @@ export async function startSession(userId: string) {
     userAgent: h.get("user-agent") ?? undefined,
   });
   (await cookies()).set(SESSION_COOKIE, cookieValue, sessionCookieOptions());
+  await recordFingerprint(userId, await getFingerprint()).catch(() => {});
 }
 
 export async function endSession() {

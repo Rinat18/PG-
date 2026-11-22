@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import { ProductGrid } from "@/components/ProductCard";
 import { listProducts, type CatalogFilters } from "@/lib/catalog";
+import { ListingGrid } from "@/components/ListingCard";
+import { listActiveListings } from "@/lib/p2p/seller";
 
 export const dynamic = "force-dynamic";
 
 const games = {
-  cs2: { code: "CS2", title: "CS2", types: ["GAME_KEY", "CS2_PRIME", "SHOP_SKIN"] },
-  dota2: { code: "DOTA2", title: "Dota 2", types: ["DOTA_PLUS", "SHOP_SKIN"] },
+  cs2: { code: "CS2", title: "CS2", types: ["GAME_KEY", "CS2_PRIME", "SHOP_SKIN", "P2P"] },
+  dota2: { code: "DOTA2", title: "Dota 2", types: ["DOTA_PLUS", "SHOP_SKIN", "P2P"] },
   other: { code: "OTHER", title: "Ключи игр и DLC", types: ["GAME_KEY"] },
 } as const;
 
@@ -14,7 +16,8 @@ const typeNames: Record<string, string> = {
   GAME_KEY: "Ключи",
   CS2_PRIME: "Prime",
   DOTA_PLUS: "Dota Plus",
-  SHOP_SKIN: "Скины",
+  SHOP_SKIN: "Скины магазина",
+  P2P: "Лоты пользователей",
 };
 
 const exteriors = ["Factory New", "Minimal Wear", "Field-Tested", "Well-Worn", "Battle-Scarred"];
@@ -43,8 +46,14 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
     statTrak: sp.st === "1" || undefined,
     sort: (["price_asc", "price_desc", "new", "popular"] as const).find((s) => s === sp.sort) ?? "popular",
   };
-  const items = await listProducts(filters);
-  const showSkinFilters = g.code === "CS2" && (!filters.type || filters.type === "SHOP_SKIN");
+  const p2pOnly = filters.type === "P2P";
+  const items = p2pOnly ? [] : await listProducts(filters);
+  // лоты пользователей показываем вместе со скинами (тип «все», «скины» или «лоты пользователей»)
+  const showLots = g.code !== "OTHER" && (!filters.type || filters.type === "SHOP_SKIN" || p2pOnly);
+  const lots = showLots
+    ? await listActiveListings({ ...filters, game: g.code as "CS2" | "DOTA2", sort: filters.sort }, 24)
+    : [];
+  const showSkinFilters = g.code === "CS2" && (!filters.type || filters.type === "SHOP_SKIN" || p2pOnly);
 
   return (
     <div className="space-y-6">
@@ -93,7 +102,15 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
           </Field>
           <button className="btn-primary w-full">Показать</button>
         </form>
-        <ProductGrid items={items} />
+        <div className="min-w-0 space-y-8">
+          {!p2pOnly && <ProductGrid items={items} />}
+          {showLots && (
+            <section className="space-y-3">
+              <h2 className="text-lg font-bold">Лоты пользователей</h2>
+              <ListingGrid items={lots} empty="Пользователи пока ничего не выставили" />
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );

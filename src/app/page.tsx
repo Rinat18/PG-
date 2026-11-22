@@ -1,14 +1,17 @@
 import Link from "next/link";
 import { ProductGrid } from "@/components/ProductCard";
 import { listProducts } from "@/lib/catalog";
+import { ListingGrid } from "@/components/ListingCard";
+import { listActiveListings } from "@/lib/p2p/seller";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [subs, popular, fresh] = await Promise.all([
+  const [subs, popular, fresh, lots] = await Promise.all([
     Promise.all([listProducts({ type: "CS2_PRIME" }, 4), listProducts({ type: "DOTA_PLUS" }, 4)]).then((r) => r.flat()),
     listProducts({ sort: "popular" }, 8),
     listProducts({ sort: "new" }, 4),
+    listActiveListings({}, 4),
   ]);
 
   return (
@@ -39,6 +42,9 @@ export default async function Home() {
       </Section>
       <Section title="Новинки">
         <ProductGrid items={fresh} />
+      </Section>
+      <Section title="Лоты пользователей" href="/catalog/cs2?type=P2P">
+        <ListingGrid items={lots} empty="Скоро здесь появятся скины от пользователей" />
       </Section>
     </div>
   );

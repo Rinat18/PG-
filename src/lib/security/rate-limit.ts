@@ -24,6 +24,8 @@ export const FORM_LIMITS = {
   emailLogin: { limit: 5, windowSeconds: 15 * 60 },
   steamLogin: { limit: 20, windowSeconds: 10 * 60 },
   profile: { limit: 20, windowSeconds: 10 * 60 },
+  sell: { limit: 40, windowSeconds: 10 * 60 },
+  verification: { limit: 5, windowSeconds: 60 * 60 },
 } as const;
 
 export async function allowFormByIp(action: keyof typeof FORM_LIMITS, ip: string | undefined): Promise<boolean> {

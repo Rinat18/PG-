@@ -51,7 +51,7 @@ export async function getClient(actor: SessionUser | null, userId: string) {
   const seller = profile
     ? {
         verificationStatus: profile.verificationStatus,
-        phone: can(actor, "pii.view") ? profile.phone : null,
+        phone: can(actor, "pii.view") && profile.phone ? decrypt(profile.phone) : null,
         hasPayoutDetails: Boolean(profile.encryptedPayoutDetails),
         dailyLimitMinor: profile.dailyLimitMinor,
         monthlyLimitMinor: profile.monthlyLimitMinor,

@@ -22,7 +22,9 @@ export default async function AdminDashboard() {
         <Stat label="На проверке" value={s.needs_review} href="/admin/orders?review=1" tone={s.needs_review ? "bad" : undefined} />
         <Stat label="Проблемных заказов" value={s.problems} href="/admin/orders?status=PROBLEM" tone={s.problems ? "bad" : undefined} />
         <Stat label="Неудавшихся возвратов" value={s.failed_refunds} href="/admin/refunds?status=FAILED" tone={s.failed_refunds ? "bad" : undefined} />
-        <Stat label="Заявок на верификацию" value={s.verification_queue} />
+        <Stat label="Заявок на верификацию" value={s.verification_queue} href={can(user, "verification.manage") ? "/admin/verification" : undefined} tone={s.verification_queue ? "bad" : undefined} />
+        {can(user, "deals.view") && <Stat label="Сделок на проверке" value={s.deals_review} href="/admin/deals?status=REVIEW" tone={s.deals_review ? "bad" : undefined} />}
+        {can(user, "deals.view") && <Stat label="Споров по сделкам" value={s.deals_dispute} href="/admin/deals?status=DISPUTE" tone={s.deals_dispute ? "bad" : undefined} />}
         {can(user, "bots.view") && <Stat label="Боты не в сети" value={s.bots_down} href="/admin/bots" tone={s.bots_down ? "bad" : undefined} />}
         {can(user, "bots.view") && <Stat label="Трейдов в очереди" value={s.trades_queued} href="/admin/bots" />}
       </div>

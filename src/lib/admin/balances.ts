@@ -96,6 +96,15 @@ export async function adjustBalance(actor: SessionUser | null, sellerId: string,
  */
 export async function createPayout(actor: SessionUser | null, sellerId: string, amountMinor: number) {
   assertCan(actor, "payouts.manage");
+  return sendPayout({ sellerId, amountMinor, actor: actorOf(actor) });
+}
+
+/**
+ * Общая часть выплаты (админка и автоматическая выплата по сделке после защиты от отката).
+ * dealId — выплата по конкретной сделке (одна на сделку, уникальный индекс).
+ */
+export async function sendPayout(p: { sellerId: string; amountMinor: number; actor: string; dealId?: string }) {
+  const { sellerId, amountMinor } = p;
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new AdminActionError("Сумма выплаты должна быть больше нуля");
   const cfg = await getSettings();
 
@@ -129,17 +138,18 @@ export async function createPayout(actor: SessionUser | null, sellerId: string, 
 
     const [payout] = await tx
       .insert(payouts)
-      .values({ sellerId, amountMinor, status: "PENDING", requestedBy: actorOf(actor) })
+      .values({ sellerId, amountMinor, status: "PENDING", requestedBy: p.actor, dealId: p.dealId })
       .returning();
     await tx.insert(balanceEntries).values({
       sellerId,
       kind: "PAYOUT",
       amountMinor: -amountMinor,
       payoutId: payout.id,
-      reason: "Выплата на реквизиты",
-      actor: actorOf(actor),
+      dealId: p.dealId,
+      reason: p.dealId ? "Выплата по сделке" : "Выплата на реквизиты",
+      actor: p.actor,
     });
-    await writeAudit(actorOf(actor), "payout.created", "user", sellerId, { payoutId: payout.id, amountMinor }, tx);
+    await writeAudit(p.actor, "payout.created", "user", sellerId, { payoutId: payout.id, amountMinor, dealId: p.dealId }, tx);
     return { payout, details: decrypt(profile.encryptedPayoutDetails), fullName: decrypt(profile.encryptedFullName) };
   });
 
@@ -154,7 +164,7 @@ export async function createPayout(actor: SessionUser | null, sellerId: string, 
       .update(payouts)
       .set({ status: "SENT", providerPayoutId: res.providerPayoutId, sentAt: new Date() })
       .where(eq(payouts.id, prepared.payout.id));
-    await writeAudit(actorOf(actor), "payout.sent", "user", sellerId, { payoutId: prepared.payout.id });
+    await writeAudit(p.actor, "payout.sent", "user", sellerId, { payoutId: prepared.payout.id, dealId: p.dealId });
     const [seller] = await db.select({ email: users.email }).from(users).where(eq(users.id, sellerId));
     if (seller?.email) {
       await queueEmail(seller.email, "payoutSent", { amountMinor, detailsMasked: maskDetails(prepared.details) });

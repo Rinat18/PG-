@@ -43,6 +43,13 @@
       "when": 1795266744833,
       "tag": "0005_bots",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795360885797,
+      "tag": "0006_p2p",
+      "breakpoints": true
     }
   ]
 }

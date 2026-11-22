@@ -14,6 +14,7 @@ import { botHeartbeat, pollSentOffers, processTradeQueue, upsertBotAccount, type
 import { MockBotClient } from "@/lib/bots/mock-client";
 import { SteamBotClient } from "./steam-client";
 import { httpFloatProvider } from "./float";
+import { processDeals } from "@/lib/p2p/deals";
 
 const env = z
   .object({
@@ -102,6 +103,20 @@ async function syncTick() {
   syncBusy = false;
 }
 
+let dealsBusy = false;
+async function dealsTick() {
+  if (dealsBusy) return;
+  dealsBusy = true;
+  try {
+    const r = await processDeals();
+    if (Object.values(r).some(Boolean)) log("сделки P2P", r);
+  } catch (e) {
+    log("ошибка проверки сделок:", (e as Error).message);
+  } finally {
+    dealsBusy = false;
+  }
+}
+
 async function heartbeat() {
   for (const botId of Object.keys(clients)) await botHeartbeat(botId, "ONLINE").catch(() => {});
 }
@@ -110,10 +125,12 @@ async function main() {
   await start();
   await syncTick();
   await tradeTick();
+  await dealsTick();
   const timers = [
     setInterval(tradeTick, env.TRADE_TICK_SECONDS * 1000),
     setInterval(syncTick, env.SYNC_TICK_MINUTES * 60_000),
     setInterval(heartbeat, 60_000),
+    setInterval(dealsTick, 60_000), // проверка передачи в P2P-сделках
   ];
   const stop = async () => {
     log("остановка");

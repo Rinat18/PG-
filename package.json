@@ -15,6 +15,7 @@
     "worker": "tsx worker/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1161.0",
     "drizzle-orm": "^0.45.4",
     "next": "15.5.29",
     "nodemailer": "^6.9.16",
